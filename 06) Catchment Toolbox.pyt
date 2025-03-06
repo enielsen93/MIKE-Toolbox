@@ -9,6 +9,7 @@ import pythonaddins
 import hashlib
 import xlwt
 import csv
+
 if "mapping" in dir(arcpy):
     arcgis_pro = False
     import arcpy.mapping as arcpymapping
@@ -226,14 +227,16 @@ class CatchmentProcessing(object):
                     update_cursor = connection.cursor()
                     for muid, imparea in zip(MUIDs,ImpAreas):
                         arcpy.AddMessage(imparea)
+                        if imparea is None:
+                            imparea = 0
                         try:
                             sql_execute = "UPDATE msm_Catchment SET ModelAImpArea = %1.2f WHERE MUID = '%s'" % (imparea/1e2, muid)
                             arcpy.AddMessage(sql_execute)
                             update_cursor.execute(
                                 sql_execute)
                         except Exception as e:
-                            arcpy.AddError("Can't change %s to %d" % (muid, imparea))
-                            raise (e)
+                            arcpy.AddError("Can't change %s to %s" % (muid, imparea))
+                            raise(e)
             else:
                 if "OplandData_GDB" in arcpy.Describe(catchments).file:
                     catchmentcursor = arcpy.da.UpdateCursor(catchments, ["MUID","BEF_GRAD"])
@@ -1929,6 +1932,7 @@ class CatchmentSlopeAnalysis(object):
         # clipped_raster = "in_memory\DTM"
         clipped_raster_resampled = "in_memory\DTM_c"
         raster_points = "in_memory\DTM_clipped_resampled_points"
+        raster_points_mapped = "in_memory\DTM_clipped_resampled_points_mapped"
         # raster_points = "C:\Papirkurv\DTM_clipped_resampled_points.shp"
         # catchment_loop = "in_memory\Catchment_loop"
 
@@ -2055,6 +2059,7 @@ class CatchmentSlopeAnalysis(object):
                         label_class.expression = label_class.expression.replace("return labelstr",
                                                                                 'if [GroundLevel] and [InvertLevel]: labelstr += "\\nD:%1.2f" % ( convertToFloat([GroundLevel]) - convertToFloat([InvertLevel]) )\r\n  return labelstr')
 
+        arcpy.SetProgressor("default", "Creating MIKE Folder")
         MIKE_folder = os.path.join(os.path.dirname(arcpy.env.scratchWorkspace), "MIKE URBAN")
         if not os.path.exists(MIKE_folder):
             os.mkdir(MIKE_folder)
@@ -2079,11 +2084,13 @@ class CatchmentSlopeAnalysis(object):
         output_raster_path = getAvailableFilename(os.path.join(arcpy.env.scratchWorkspace, "Slope"))
         output_vertical_add_raster_path = getAvailableFilename(os.path.join(arcpy.env.scratchWorkspace, "VerticalAdd"))
 
+        arcpy.SetProgressor("default", "Graphing MIKE Database")
         # graphing MU_database
         import mikegraph
         graph = mikegraph.Graph(MU_database)
         graph.map_network()
 
+        arcpy.SetProgressor("default", "Catchment Analysis")
         catchments_MUID = [row[0] for row in arcpy.da.SearchCursor(msm_Catchment, ["MUID"])]
         arcpy.AddMessage("Analyzing %d Catchments" % len(catchments_MUID))
         catchments = [graph.catchments_dict[muid] for muid in catchments_MUID]
@@ -2101,6 +2108,7 @@ class CatchmentSlopeAnalysis(object):
                         cursor.updateRow(row)
                         break
 
+        arcpy.SetProgressor("default", "Raster Preparation")
         arcpy.management.Clip(raster, "#", clipped_raster, in_template_dataset=catchments_output,
                               clipping_geometry="ClippingGeometry", nodata_value=-999)
         arcpy.management.Resample(
@@ -2110,6 +2118,7 @@ class CatchmentSlopeAnalysis(object):
             resampling_type="NEAREST"
         )
 
+        arcpy.SetProgressor("default", "Converting Raster to Points")
         raster = arcpy.Raster(clipped_raster_resampled)
         raster_array = arcpy.RasterToNumPyArray(raster)
         cell_size = raster.meanCellHeight  # Assuming square cells
@@ -2121,7 +2130,7 @@ class CatchmentSlopeAnalysis(object):
             geometry_type='POINT'
             # spatial_reference=raster.spatialReference
         )
-        arcpy.AddField_management(raster_points, 'VALUE', 'DOUBLE')
+        arcpy.AddField_management(raster_points, 'grid_code', 'DOUBLE')
         arcpy.AddField_management(raster_points, 'oldID', 'FLOAT', field_scale=0, field_precision=15)
 
         points_slope = np.zeros(raster_array.shape, dtype=float).flatten()
@@ -2131,26 +2140,54 @@ class CatchmentSlopeAnalysis(object):
         points_vertical_add.fill(-999)
         i = 0
         arcpy.SetProgressor("step", "Converting Raster to Points", 0, int(raster_array.size), 1)
-        with arcpy.da.InsertCursor(raster_points, ['SHAPE@', 'VALUE', "oldID"]) as cursor:
-            rows, cols = raster_array.shape
-            for row in range(rows):
-                for col in range(cols):
-                    # Calculate the coordinates for the cell center
-                    if raster_array[rows - 1 - row, col] != -999:
-                        x = lower_left.X + col * cell_size + cell_size / 2
-                        y = lower_left.Y + row * cell_size + cell_size / 2
+        # arcpy.conversion.RasterToPoint(raster, raster_points, "VALUE")
 
-                        # Create a point geometry
-                        point = arcpy.Point(x, y)
-                        point_geom = arcpy.PointGeometry(point, raster.spatialReference)
+        rows, cols = raster_array.shape
+        x_coords = lower_left.X + (np.arange(cols) * cell_size) + (cell_size / 2)
+        y_coords = lower_left.Y + (np.arange(rows) * cell_size) + (cell_size / 2)
+        y_coords = np.flipud(y_coords)  # Flip Y to match raster indexing
 
-                        # Insert the point and value into the feature class
-                        try:
-                            cursor.insertRow([point_geom, raster_array[rows - 1 - row, col], i])
-                        except Exception as e:
-                            pass
-                    i+= 1
-                arcpy.SetProgressorPosition(i)
+        # Flatten arrays for vectorized processing
+        x_grid, y_grid = np.meshgrid(x_coords, y_coords)
+        valid_mask = raster_array<1e100  # Mask for valid values
+        flat_x = x_grid[valid_mask]
+        flat_y = y_grid[valid_mask]
+        flat_values = raster_array[valid_mask]
+
+        # Batch insert points
+        point_data = [
+            (arcpy.PointGeometry(arcpy.Point(x, y), raster.spatialReference), value, i)
+            for i, (x, y, value) in enumerate(zip(flat_x, flat_y, flat_values)) if value != -999]
+
+        # Use arcpy.da.InsertCursor in batch
+
+        with arcpy.da.InsertCursor(raster_points, ['SHAPE@', 'grid_code', "oldID"]) as cursor:
+            for row_i, row in enumerate(point_data):
+                cursor.insertRow(row)
+                if row_i % 30 == 0:
+                    arcpy.SetProgressorPosition(i)
+
+        # with arcpy.da.InsertCursor(raster_points, ['SHAPE@', 'grid_code', 'oldID']) as cursor:
+        #     rows, cols = raster_array.shape
+        #     for row in range(rows):
+        #         for col in range(cols):
+        #             # Calculate the coordinates for the cell center
+        #             if raster_array[rows - 1 - row, col] != -999:
+        #                 x = lower_left.X + col * cell_size + cell_size / 2
+        #                 y = lower_left.Y + row * cell_size + cell_size / 2
+        #
+        #                 # Create a point geometry
+        #                 point = arcpy.Point(x, y)
+        #                 point_geom = arcpy.PointGeometry(point, raster.spatialReference)
+        #
+        #                 # Insert the point and value into the feature class
+        #                 try:
+        #                     cursor.insertRow([point_geom, raster_array[rows - 1 - row, col], i])
+        #                 except Exception as e:
+        #                     raise(e)
+        #                     pass
+        #             i+= 1
+        #         arcpy.SetProgressorPosition(i)
 
         class Node:
             def __init__(self, muid, shape, critical_level):
@@ -2158,6 +2195,8 @@ class CatchmentSlopeAnalysis(object):
                 self.shape = shape
                 self.critical_level = critical_level
 
+
+        arcpy.SetProgressor("default", "Getting Catchments and Nodes")
         nodes = {}
         with arcpy.da.SearchCursor(msm_Node, ["muid", "SHAPE@", msm_Link_field]) as cursor:
             for row in cursor:
@@ -2170,8 +2209,6 @@ class CatchmentSlopeAnalysis(object):
                         catchment.OID = row[0]
 
         # arcpy.AddSpatialIndex_management(raster_points)
-
-        arcpy.MakeFeatureLayer_management(raster_points, "points_layer")
 
         arcpy.SetProgressor("step", "Converting Raster to Points", 0, int(raster_array.size), 1)
         arcpy.SetProgressorPosition(i)
@@ -2187,62 +2224,127 @@ class CatchmentSlopeAnalysis(object):
 
         arcpy.MakeFeatureLayer_management(catchments_output, "Catchment Layer")
 
-        with arcpy.da.SearchCursor(catchments_output, ["MUID", "NodeID", "SHAPE@"]) as catchment_cursor:
-            arcpy.SetProgressor("step", "Analyzing Catchments", 0, int(len([row for row in catchment_cursor])), 1)
-            catchment_cursor.reset()
+        # arcpy.AddSpatialIndex_management(catchments_output)
+        # arcpy.AddSpatialIndex_management(raster_points)
+        arcpy.SetProgressor("default", "Spatial Join of raster points and catchments")
+        raster_points_name = arcpy.Describe(raster_points)
+        catchments_output_name = arcpy.Describe(catchments_output)
 
-            for i, catchment_row in enumerate(catchment_cursor):
-                node_id = catchment_row[1]
-                if not node_id:
-                    arcpy.AddMessage("No Node_ID for catchment %s" % (catchment_row[0]))
-                    continue
-                # arcpy.Select_analysis(arcpy.Describe(msm_Catchment).catalogPath, catchment_loop,
-                #                       where_clause="MUID = '%s'" % catchment_row[0])
+        # FIELD MAPPINGS
+        field_mappings = arcpy.FieldMappings()
 
-                arcpy.management.SelectLayerByAttribute("Catchment Layer", "NEW_SELECTION", where_clause="MUID = '%s'" % catchment_row[0])
+        # Function to add a field with a specific merge rule
+        def add_field_mapping(field_mappings, input_fc, field_name, merge_rule, output_name=None, field_type=None,
+                              field_length=None):
+            field_map = arcpy.FieldMap()
+            field_map.addInputField(input_fc, field_name)
 
-                arcpy.SelectLayerByLocation_management(
-                    in_layer="points_layer",  # Layer to select from
-                    overlap_type="INTERSECT",  # Spatial relationship
-                    select_features="Catchment Layer"  # The polygon features
-                )
+            # Set merge rule
+            field_map.mergeRule = merge_rule
 
-                links = [link for link in graph.network.links.values() if
-                         link.fromnode == node_id or link.tonode == node_id]
+            # Modify output field properties if specified
+            if output_name or field_type or field_length:
+                field = field_map.outputField
+                if output_name:
+                    field.name = output_name
+                    field.aliasName = output_name
+                if field_type:
+                    field.type = field_type  # 'TEXT', 'FLOAT', 'LONG'
+                if field_length and field_type == "TEXT":
+                    field.length = field_length  # Set text length explicitly
+                field_map.outputField = field
 
-                links_3d = []
-                for link in links:
-                    links_3d.append(link.shape_3d(uplevel = nodes[link.fromnode].critical_level, dwlevel = nodes[link.tonode].critical_level))
+            field_mappings.addFieldMap(field_map)
 
-                with arcpy.da.SearchCursor("points_layer", ["SHAPE@", "oldID", "VALUE"]) as cursor:
-                    for row in cursor:
-                        shortest_distance = 1e9
-                        nearest_point = None
-                        for link in links_3d:
-                            point, _, distance, _ = link.queryPointAndDistance(row[0])
-                            if distance < shortest_distance:
-                                shortest_distance = distance
-                                nearest_point = point
-                        frostfri_dybde = initial_depth
-                        if shortest_distance > 1:
-                            points_slope[int(row[1])] = (row[
-                                                             2] - frostfri_dybde - nearest_point.centroid.Z) / shortest_distance * 1e3
-                            points_vertical_add[int(row[1])] = required_slope * min(shortest_distance, 10) + 10e-3 * max(0,
-                                                                                                                         shortest_distance - 10) - (
-                                                                       row[
-                                                                           2] - frostfri_dybde - nearest_point.centroid.Z)
-                            if add_debug_output:
-                                debug_cursor.insertRow([arcpy.Polyline(arcpy.Array([row[0].centroid, nearest_point.centroid])), shortest_distance, row[2], nearest_point.centroid.Z, points_slope[int(row[1])]])
+        # Add fields from raster_points (target)
+        add_field_mapping(field_mappings, raster_points, "grid_code", "FIRST")
+        add_field_mapping(field_mappings, raster_points, "oldID", "FIRST")
 
-                arcpy.SetProgressorPosition(i)
+        # Add fields from catchments_output (join)
+        # add_field_mapping(field_mappings, catchments_output, "muid", "FIRST")
+        add_field_mapping(field_mappings, catchments_output, "NodeID", "FIRST", field_type="TEXT", field_length=50)
+
+        arcpy.analysis.SpatialJoin(raster_points, catchments_output, raster_points_mapped, join_operation = "JOIN_ONE_TO_ONE", match_option = "INTERSECT", join_type = "KEEP_COMMON", field_mapping = field_mappings)
+                                   #field_mapping='Id "Id" true true false 6 Long 0 6 ,First,#,DTM_clipped_resampled_points,Id,-1,-1;grid_code "grid_code" true true false 19 Double 0 0 ,First,#,DTM_clipped_resampled_points,grid_code,-1,-1;oldID "oldID" true true false 15 Double 0 15 ,First,#,DTM_clipped_resampled_points,oldID,-1,-1;NodeID "NodeID" true true false 254 Text 0 0 ,First,#,catchments_export,NodeID,-1,-1')
+        # Replace a layer/table view name with a path to a dataset (which can be a layer file) or create the layer/table view within the script
+        # The following inputs are layers or table views: "DTM_clipped_resampled_points", "catchments_export"
+        # arcpy.SpatialJoin_analysis(target_features="DTM_clipped_resampled_points", join_features="catchments_export",
+        #                            out_feature_class="C:/Papirkurv/DTM_clipped_resampled_points_mapped.shp",
+        #                            join_operation="JOIN_ONE_TO_ONE", join_type="KEEP_COMMON",
+        #                            field_mapping='Id "Id" true true false 6 Long 0 6 ,First,#,DTM_clipped_resampled_points,Id,-1,-1;grid_code "grid_code" true true false 19 Double 0 0 ,First,#,DTM_clipped_resampled_points,grid_code,-1,-1;oldID "oldID" true true false 15 Double 0 15 ,First,#,DTM_clipped_resampled_points,oldID,-1,-1;NodeID "NodeID" true true false 254 Text 0 0 ,First,#,catchments_export,NodeID,-1,-1',
+        #                            match_option="INTERSECT", search_radius="", distance_field_name="")
+
+
+        # import timeit
+        # with arcpy.da.SearchCursor(catchments_output, ["MUID", "NodeID", "SHAPE@"]) as catchment_cursor:
+        #     arcpy.SetProgressor("step", "Analyzing Catchments", 0, int(len([row for row in catchment_cursor])), 1)
+        #     catchment_cursor.reset()
+        #     # arcpy.AddMessage(timeit.timeit("catchment_cursor.reset()", globals=globals(),number= 10))
+        #
+        #     for i, catchment_row in enumerate(catchment_cursor):
+        #         node_id = catchment_row[1]
+        #         if not node_id:
+        #             arcpy.AddMessage("No Node_ID for catchment %s" % (catchment_row[0]))
+        #             continue
+        #         # arcpy.Select_analysis(arcpy.Describe(msm_Catchment).catalogPath, catchment_loop,
+        #         #                       where_clause="MUID = '%s'" % catchment_row[0])
+        #
+        #         arcpy.management.SelectLayerByAttribute("Catchment Layer", "NEW_SELECTION", where_clause="MUID = '%s'" % catchment_row[0])
+        #
+        #         # arcpy.SelectLayerByLocation_management(
+        #         #     in_layer="points_layer",  # Layer to select from
+        #         #     overlap_type="INTERSECT",  # Spatial relationship
+        #         #     select_features="Catchment Layer"  # The polygon features
+        #         # )
+        #         #
+        #         links = [link for link in graph.network.links.values() if
+        #                  link.fromnode == node_id or link.tonode == node_id]
+        #
+        #         links_3d = []
+        #         for link in links:
+        #             links_3d.append(link.shape_3d(uplevel = nodes[link.fromnode].critical_level, dwlevel = nodes[link.tonode].critical_level))
+
+        arcpy.SetProgressor("step", "Slope Analysis", 0, int(raster_array.size), 1)
+        with arcpy.da.SearchCursor(raster_points_mapped, ["SHAPE@", "oldID", "grid_code", "NodeID"]) as cursor:
+            for row_i, row in enumerate(cursor):
+                node_id = row[3]
+                if len(node_id)>0:
+                    links = [link for link in graph.network.links.values() if
+                             link.fromnode == node_id or link.tonode == node_id]
+
+                    links_3d = []
+                    for link in links:
+                        links_3d.append(link.shape_3d(uplevel=nodes[link.fromnode].critical_level,
+                                                      dwlevel=nodes[link.tonode].critical_level))
+                    shortest_distance = 1e9
+                    nearest_point = None
+                    for link in links_3d:
+                        point, _, distance, _ = link.queryPointAndDistance(row[0])
+                        if distance < shortest_distance:
+                            shortest_distance = distance
+                            nearest_point = point
+                    frostfri_dybde = initial_depth
+
+                    if shortest_distance > 1 and nearest_point is not None:
+                        points_slope[int(row[1])] = (row[2] - frostfri_dybde - nearest_point.centroid.Z) / shortest_distance * 1e3
+
+                        points_vertical_add[int(row[1])] = required_slope * min(shortest_distance, 10) + 10e-3 * max(0,
+                                                                                                                     shortest_distance - 10) - (
+                                                                   row[
+                                                                       2] - frostfri_dybde - nearest_point.centroid.Z)
+                        if add_debug_output:
+                            debug_cursor.insertRow([arcpy.Polyline(arcpy.Array([row[0].centroid, nearest_point.centroid])), shortest_distance, row[2], nearest_point.centroid.Z, points_slope[int(row[1])]])
+                if row_i % 10 == 0:
+                    arcpy.SetProgressorPosition(row_i)
 
         if add_debug_output:
             del debug_cursor
             addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\Catchment Connections.lyr", debug_output_path,
                      workspace_type="FILEGDB_WORKSPACE", new_name = "Catchment Link")
 
+        arcpy.SetProgressor("default", "Creating Rasters")
         slope_raster = arcpy.NumPyArrayToRaster(
-            in_array=np.flipud(points_slope.reshape(raster_array.shape)),
+            in_array=points_slope.reshape(raster_array.shape),
             lower_left_corner=lower_left,
             x_cell_size=cell_size,
             y_cell_size=cell_size,
@@ -2251,7 +2353,7 @@ class CatchmentSlopeAnalysis(object):
         slope_raster.save(output_raster_path)
 
         vertical_add_raster = arcpy.NumPyArrayToRaster(
-            in_array=np.flipud(points_vertical_add.reshape(raster_array.shape)),
+            in_array=(points_vertical_add.reshape(raster_array.shape)),
             lower_left_corner=lower_left,
             x_cell_size=cell_size,
             y_cell_size=cell_size,
@@ -2259,6 +2361,7 @@ class CatchmentSlopeAnalysis(object):
         )
         vertical_add_raster.save(output_vertical_add_raster_path)
 
+        arcpy.SetProgressor("default", "Adding to Layout")
         addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\Catchment_elevation_adjustment.lyr",
                  output_vertical_add_raster_path, workspace_type="FILEGDB_WORKSPACE")
 
@@ -2272,7 +2375,7 @@ class CatchmentConnectionDescription(object):
     def __init__(self):
         self.label = "c) Assign NetTypeNo to Catchment Connections"
         self.description = "c) Assign NetTypeNo to Catchment Connections"
-        self.canRunInBackground = True
+        self.canRunInBackground = False
 
     def getParameterInfo(self):
         # Define parameter definitions
@@ -2324,7 +2427,6 @@ class CatchmentConnectionDescription(object):
         elif assign_type.lower() == "NetTypeNo of NodeID of Catchment".lower():
             raise (Exception("Method not currently supported"))
         elif assign_type.lower() == "Parameter Set of Catchment".lower():
-
             arcpy.AddMessage([row for row in
                                     arcpy.da.SearchCursor(catchment_layer, ["MUID", "ModelAParAID"])])
             catchments_HParAID = {row[0]: row[1] for row in
