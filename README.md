@@ -34,7 +34,9 @@ python -m pip install https://github.com/enielsen93/mikegraph/tarball/master
 ### Using a Non-Default Python Interpreter
 If ArcGIS is not your default Python interpreter, specify the path to its Python executable. For example:
 ```bash
+"C:\Python27\ArcGIS10.7\python.exe" -m pip install https://github.com/enielsen93/networker/tarball/master
 "C:\Python27\ArcGIS10.7\python.exe" -m pip install https://github.com/enielsen93/ColebrookWhite/tarball/master
+"C:\Python27\ArcGIS10.7\python.exe" -m pip install https://github.com/enielsen93/mikegraph/tarball/master
 ```
 
 ---
