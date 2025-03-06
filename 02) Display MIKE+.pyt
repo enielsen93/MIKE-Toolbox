@@ -20,6 +20,7 @@ import re
 import scipy.integrate
 from collections import namedtuple
 import warnings
+import shutil
 
 def getAvailableFilename(filepath, parent = None):
     parent = "F%s" % (parent) if parent and parent[0].isdigit() else None
@@ -104,7 +105,16 @@ class DisplaySqliteStep1(object):
             parameterType="optional",
             direction="Output")
 
-        parameters = [sqlite_database, join_catchments, features_to_display, sql_query]
+        copy_and_show_delete = arcpy.Parameter(
+            displayName="Duplicate .sqlite and show duplicate (!delete!)",
+            name="copy_and_show_delete",
+            datatype="Boolean",
+            category="Additional Settings",
+            parameterType="optional",
+            direction="Output")
+        copy_and_show_delete.value = False
+
+        parameters = [sqlite_database, join_catchments, features_to_display, sql_query, copy_and_show_delete]
 
         return parameters
 
@@ -127,6 +137,24 @@ class DisplaySqliteStep1(object):
         features_to_display = [feature_name.replace("'", "").replace('"', '') for feature_name in
                                parameters[2].ValueAsText.split(";")]
         sql_query = parameters[3].Value
+        copy_and_show_delete = parameters[4].Value
+
+        if copy_and_show_delete:
+            new_file_path = os.path.join(*os.path.split(MU_database)[:-1] + (
+            os.path.splitext(os.path.basename(MU_database))[0] + "!delete!" + os.path.splitext(MU_database)[1],))
+
+            if os.path.exists(new_file_path):
+                try:
+                    os.remove(new_file_path)  # Attempt to delete the existing file
+                except Exception as e:
+                    raise IOError("The file '{}' is locked and cannot be deleted: {}".format(new_file_path, str(e)))
+
+            try:
+                shutil.copy2(MU_database, new_file_path)  # Duplicate the file
+                print("File duplicated successfully: {}".format(new_file_path))
+            except Exception as e:
+                raise IOError("Failed to duplicate the file: {}".format(str(e)))
+            MU_database = new_file_path
 
         msm_Node = MU_database + "\main.msm_Node"
         msm_Link = MU_database + "\main.msm_Link"
@@ -811,7 +839,9 @@ class DisplaySqliteStep1(object):
                 arcpy.SetProgressor("default", "Joining ms_Catchment and msm_HModA and adding catchments to map")
                 ms_Catchment = arcpy.CopyFeatures_management(ms_Catchment, getAvailableFilename(
                     arcpy.env.scratchGDB + "\ms_CatchmentImp", parent=MU_database)).getOutput(0)
-                # arcpy.JoinField_management(in_data=ms_Catchment, in_field="MUID", join_table=MU_database + r"\msm_HModA", join_field="CatchID", fields="ImpArea")
+                arcpy.management.RepairGeometry(ms_Catchment, delete_null = "DELETE_NULL")
+
+                                                # arcpy.JoinField_management(in_data=ms_Catchment, in_field="MUID", join_table=MU_database + r"\msm_HModA", join_field="CatchID", fields="ImpArea")
 
                 arcpy.management.AddField(ms_Catchment, "ImpArea", "FLOAT")
                 arcpy.management.AddField(ms_Catchment, "ParAID", "TEXT")
