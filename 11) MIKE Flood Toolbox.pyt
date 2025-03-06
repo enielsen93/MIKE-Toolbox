@@ -249,7 +249,7 @@ class DFSUFloodStatisticsToRaster(object):
         dfs = mikeio.dfsu.Dfsu2DH(DFSUFile)
 
         statusUpdate("Retrieving element coordinates from DFSU file", tic)
-        element_coordinates = dfs.element_coordinates
+        element_coordinates = dfs.geometry.element_coordinates
         dfs_read = dfs.read(items=[i for i, a in enumerate(dfs.items) if DFSUField == a.name])
         dfs_read_data = dfs_read.to_numpy()
         np.nan_to_num(dfs_read_data, copy=False)
@@ -290,14 +290,14 @@ class DFSUFloodStatisticsToRaster(object):
             for i in idx:
                 point = arcpy.Point(raster_x_flat[i], raster_y_flat[i])
                 for clip_shape in clip_shapes:
-                    if clip_shape.contains(point):
+                    if clip_shape.geometry.contains(point):
                         idx_remove.append(i)
             for i in idx_remove:
                 idx.remove(i)
 
             statusUpdate("Removing raster elements that are not contained inside DFSU-file", tic)
             idx_array = np.array(list(idx))
-            raster_coord_in_mesh = idx_array[np.where(~dfs.contains(np.column_stack((raster_x_flat[idx_array],
+            raster_coord_in_mesh = idx_array[np.where(~dfs.geometry.contains(np.column_stack((raster_x_flat[idx_array],
                                                                                      raster_y_flat[
                                                                                          idx_array]))))]  # idx_list[np.where(dfs.contains(np.column_stack((raster_x_flat[idx_list],raster_y_flat[idx_list]))))]
             for i in raster_coord_in_mesh:
@@ -520,13 +520,13 @@ class DFSUToRaster(object):
             idx = list(idx)
 
             arcpy.CreateFeatureclass_management("in_memory", "ClipPolygon", "POLYGON")
-            boundary_xy_table = dfs.boundary_polylines[1][0].xy
+            boundary_xy_table = dfs.geometry.boundary_polylines[1][0].xy
             polygons = arcpy.Polygon(arcpy.Array([arcpy.Point(xy[0], xy[1]) for xy in boundary_xy_table]))
             with arcpy.da.InsertCursor("in_memory\ClipPolygon", "SHAPE@") as cursor:
                 cursor.insertRow([polygons])
 
             arcpy.CreateFeatureclass_management("in_memory", "CutPolygon", "POLYGON")
-            cut_polygons = dfs.boundary_polylines[3]
+            cut_polygons = dfs.geometry.boundary_polylines[3]
             polygons = []
             for cut_polygon in cut_polygons:
                 boundary_xy_table = cut_polygon.xy
@@ -556,7 +556,7 @@ class DFSUToRaster(object):
 
             raster_points_with_value = np.where(raster_depth_flat > 0)[0]
             arcpy.AddMessage(np.max(raster_depth_flat))
-            idx_remove = ~dfs.contains(
+            idx_remove = ~dfs.geometry.contains(
                 np.array((raster_x_flat, raster_y_flat))[:, raster_points_with_value].transpose())
             arcpy.AddMessage(idx_remove)
             if idx_remove.size>0:
@@ -879,7 +879,7 @@ class DFSUToPolygons(object):
         dfs = mikeio.dfsu.Dfsu2DH(DFSUFile)
         DFSUField = "Total water depth"
 
-        element_coordinates = dfs.element_coordinates
+        element_coordinates = dfs.geometry.element_coordinates
                 
         dfs_read = dfs.read(items=[i for i,item in enumerate(dfs.items) if item.name in DFSUField])
 
@@ -1179,13 +1179,13 @@ class MeshToTIN(object):
 
         if clip_TIN:
             arcpy.CreateFeatureclass_management("in_memory", "ClipPolygon", "POLYGON")
-            boundary_xy_table = dfs.boundary_polylines[1][0].xy
+            boundary_xy_table = dfs.geometry.boundary_polylines[1][0].xy
             polygons = arcpy.Polygon(arcpy.Array([arcpy.Point(xy[0], xy[1]) for xy in boundary_xy_table]))
             with arcpy.da.InsertCursor("in_memory\ClipPolygon", "SHAPE@") as cursor:
                 cursor.insertRow([polygons])
 
             arcpy.CreateFeatureclass_management("in_memory", "CutPolygon", "POLYGON")
-            cut_polygons = dfs.boundary_polylines[3]
+            cut_polygons = dfs.geometry.boundary_polylines[3]
             polygons = []
             for cut_polygon in cut_polygons:
                 boundary_xy_table = cut_polygon.xy
