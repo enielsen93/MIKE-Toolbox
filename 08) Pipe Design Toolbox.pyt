@@ -236,8 +236,7 @@ class PipeDimensionToolTAPro(object):
                  lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
                  and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)] and (
                              "sqlite" in arcpy.Describe(lyr).catalogPath or "mdb" in arcpy.Describe(lyr).catalogPath)
-                 and lyr.visible][
-            0]
+                 and lyr.visible]
 
         if links and not pipe_layer:
             parameters[0].value = links
@@ -955,7 +954,6 @@ class upgradeDimensions(object):
             with sqlite3.connect(
                     MU_database) as connection:
                 update_cursor = connection.cursor()
-
                 with arcpy.da.SearchCursor(arcpy.Describe(pipe_layer).catalogPath.replace("!delete!",""), ["MUID", "Diameter", "MaterialID"],
                                            where_clause="MUID IN ('%s')" % ("', '".join(MUIDs))) as cursor:
                     for row in cursor:
@@ -970,9 +968,10 @@ class upgradeDimensions(object):
                         diameter = D[np.where(row[1] * 1e3 < D)[0][0]] / 1e3
                         material = row[2]
                         if change_material:
-                            material = "Concrete (Normal)" if row[1] > 0.45 else "Plastic"
+                            material = "Concrete (Normal)" if diameter > 0.45 else "Plastic"
                         update_cursor.execute("UPDATE msm_Link SET Diameter = %1.3f, MaterialID = '%s' WHERE MUID = '%s'" % (diameter, material, row[0]))
                         arcpy.AddMessage("Upgraded pipe %s from %d to %d" % (row[0], oldDiameter, diameter*1e3))
+                connection.commit()
         else:
             edit = arcpy.da.Editor(os.path.dirname(os.path.dirname(arcpy.Describe(pipe_layer).catalogPath)))
             edit.startEditing(False, True)
@@ -1081,9 +1080,12 @@ class downgradeDimensions(object):
                         diameter = D[np.where(row[1]*1e3>D)[0][-1]]/1e3
                         material = row[2]
                         if change_material:
-                            material = "Concrete (Normal)" if row[1] > 0.45 else "Plastic"
-                        update_cursor.execute("UPDATE msm_Link SET Diameter = %1.3f, MaterialID = '%s' WHERE MUID = '%s'" % (diameter, material, row[0]))
-                        arcpy.AddMessage("Upgraded pipe %s from %d to %d" % (row[0], oldDiameter, diameter*1e3))
+                            material = "Concrete (Normal)" if diameter > 0.45 else "Plastic"
+                        arcpy.AddMessage("UPDATE msm_Link SET Diameter = %1.3f, MaterialID = '%s' WHERE MUID = '%s'" % (diameter, material, row[0]))
+                        update_cursor.execute(
+                            "UPDATE msm_Link SET Diameter = %1.3f, MaterialID = '%s' WHERE MUID = '%s'" % (diameter, material, row[0]))
+                        arcpy.AddMessage("Downgraded pipe %s from %d to %d" % (row[0], oldDiameter, diameter*1e3))
+                connection.commit()
         else:
             edit = arcpy.da.Editor(os.path.dirname(os.path.dirname(arcpy.Describe(pipe_layer).catalogPath)))
             edit.startEditing(False, True)
@@ -1342,7 +1344,8 @@ class CopyDiameter(object):
                         # match = [reference for reference in references if getattr(reference, "muid") == match_MUID][0]
                     else:
                         arcpy.AddMessage(MUID)
-                        match = [reference for reference in references if getattr(reference, "muid") == MUID][0]
+
+                        match = [reference for reference in references if getattr(reference, "muid") == MUID]
                     if match:
                         for field in copy_field:
                             field_value = getattr(match[0], field.lower())
@@ -2011,40 +2014,74 @@ class CalculateSlopeOfPipe(object):
         pipe_layers = parameters[0].ValueAsText.split(";")
 
         for pipe_layer in pipe_layers:
-            links_OID = [row[0] for row in arcpy.da.SearchCursor(pipe_layer, ["OID@"])]
-            OID_fieldname = arcpy.Describe(pipe_layer).OIDFieldName
+            is_sqlite = ".sqlite" in arcpy.Describe(pipe_layer).catalogPath
+            if is_sqlite:
+                links_MUID = [row[0] for row in arcpy.da.SearchCursor(pipe_layer, ["MUID"])]
+                MU_database = os.path.dirname(arcpy.Describe(pipe_layer).catalogPath).replace("\mu_Geometry", "")
 
-            MU_database = os.path.dirname(arcpy.Describe(pipe_layer).catalogPath).replace("\mu_Geometry","")
+                msm_Node = os.path.join(MU_database, "msm_Node")
 
-            msm_Node = os.path.join(MU_database, "msm_Node")
+                nodes_invert_level = {row[0]: row[1] for row in
+                                      arcpy.da.SearchCursor(msm_Node, ["MUID", "InvertLevel"])}
 
-            nodes_invert_level = {row[0]: row[1] for row in arcpy.da.SearchCursor(msm_Node, ["MUID", "InvertLevel"])}
+                arcpy.SetProgressorLabel("Networking Database")
+                network = networker.NetworkLinks(MU_database, map_only = "link", filter_sql_query = "MUID IN ('%s')" % ("', '".join(links_MUID)))
+                arcpy.SetProgressor("step", "Calculating slope of pipes", 0, len(links_MUID), 1)
 
-            arcpy.SetProgressorLabel("Networking Database")
-            network = networker.NetworkLinks(MU_database, map_only = "link", filter_sql_query = "%s IN (%s)" % (OID_fieldname, ', '.join([str(OID) for OID in links_OID])))
+                with sqlite3.connect(MU_database) as connection:
+                    update_cursor = connection.cursor()
+                    with arcpy.da.SearchCursor(arcpy.Describe(pipe_layer).catalogPath, ["MUID", "UpLevel", "DwLevel"], where_clause = "MUID IN ('%s')" % ("', '".join(links_MUID))) as cursor:
+                        for row_i, row in enumerate(cursor):
+                            try:
 
-            edit = arcpy.da.Editor(MU_database)
-            edit.startEditing(False, True)
-            edit.startOperation()
+                                arcpy.SetProgressorPosition(row_i)
+                                uplevel = nodes_invert_level[network.links[row[0]].fromnode] if not row[1] else row[1]
+                                dwlevel = nodes_invert_level[network.links[row[0]].tonode] if not row[2] else row[2]
 
-            arcpy.SetProgressor("step", "Calculating slope of pipes", 0, len(links_OID), 1)
-            with arcpy.da.UpdateCursor(arcpy.Describe(pipe_layer).catalogPath, ["MUID", "Slope_C", "UpLevel", "DwLevel"], where_clause = "%s IN (%s)" % (OID_fieldname, ', '.join([str(OID) for OID in links_OID]))) as cursor:
-                for row_i, row in enumerate(cursor):
-                    try:
-                        arcpy.SetProgressorPosition(row_i)
-                        uplevel = nodes_invert_level[network.links[row[0]].fromnode] if not row[2] else row[2]
-                        dwlevel = nodes_invert_level[network.links[row[0]].tonode] if not row[3] else row[3]
-                        length = network.links[row[0]].length
-                        slope = (uplevel-dwlevel)/length*1e2
-                        row[1] = slope
-                        # arcpy.AddMessage(row)
-                        # arcpy.AddMessage((uplevel, dwlevel, length, slope))
-                        cursor.updateRow(row)
-                    except Exception as e:
-                        arcpy.AddError(traceback.format_exc())
-                        arcpy.AddError(row)
-            edit.stopOperation()
-            edit.stopEditing(True)
+                                length = network.links[row[0]].length
+                                slope = (uplevel - dwlevel) / length * 1e2
+                                update_cursor.execute("UPDATE msm_Link SET Slope = %1.6f WHERE MUID = '%s'" % (slope, row[0]))
+                                # arcpy.AddMessage("UPDATE msm_Link SET Slope = %1.6f WHERE MUID = '%s'" % (slope, row[0]))
+                            except Exception as e:
+                                arcpy.AddError(traceback.format_exc())
+                                arcpy.AddError(row)
+
+                    connection.commit()
+            else:
+                links_OID = [row[0] for row in arcpy.da.SearchCursor(pipe_layer, ["OID@"])]
+                OID_fieldname = arcpy.Describe(pipe_layer).OIDFieldName
+
+                MU_database = os.path.dirname(arcpy.Describe(pipe_layer).catalogPath).replace("\mu_Geometry","")
+
+                msm_Node = os.path.join(MU_database, "msm_Node")
+
+                nodes_invert_level = {row[0]: row[1] for row in arcpy.da.SearchCursor(msm_Node, ["MUID", "InvertLevel"])}
+
+                arcpy.SetProgressorLabel("Networking Database")
+                network = networker.NetworkLinks(MU_database, map_only = "link", filter_sql_query = "%s IN (%s)" % (OID_fieldname, ', '.join([str(OID) for OID in links_OID])))
+
+                edit = arcpy.da.Editor(MU_database)
+                edit.startEditing(False, True)
+                edit.startOperation()
+
+                arcpy.SetProgressor("step", "Calculating slope of pipes", 0, len(links_OID), 1)
+                with arcpy.da.UpdateCursor(arcpy.Describe(pipe_layer).catalogPath, ["MUID", "Slope_C", "UpLevel", "DwLevel"], where_clause = "%s IN (%s)" % (OID_fieldname, ', '.join([str(OID) for OID in links_OID]))) as cursor:
+                    for row_i, row in enumerate(cursor):
+                        try:
+                            arcpy.SetProgressorPosition(row_i)
+                            uplevel = nodes_invert_level[network.links[row[0]].fromnode] if not row[2] else row[2]
+                            dwlevel = nodes_invert_level[network.links[row[0]].tonode] if not row[3] else row[3]
+                            length = network.links[row[0]].length
+                            slope = (uplevel-dwlevel)/length*1e2
+                            row[1] = slope
+                            # arcpy.AddMessage(row)
+                            # arcpy.AddMessage((uplevel, dwlevel, length, slope))
+                            cursor.updateRow(row)
+                        except Exception as e:
+                            arcpy.AddError(traceback.format_exc())
+                            arcpy.AddError(row)
+                edit.stopOperation()
+                edit.stopEditing(True)
         return
 
 
