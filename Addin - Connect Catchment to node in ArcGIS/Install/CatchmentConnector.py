@@ -2,7 +2,7 @@ import arcpy
 import pythonaddins
 import numpy as np
 import os
-from scipy.spatial import KDTree
+from scipy.spatial import cKDTree
 
 def find_duplicates(strings):
     return list(set([x for x in strings if strings.count(x) > 1]))
@@ -64,10 +64,10 @@ class ConnectCatchment(object):
         pass
     def onMouseDownMap(self, x, y, button, shift):
         nodeLayer = [layer for layer in arcpy.mapping.ListLayers(self.mxd) if layer.longName == manholeLayer.selectedLayer][0]
-        if arcpy.Exists(os.path.join(nodeLayer.workspacePath, "msm_Node")):
-            nodeLayer = os.path.join(nodeLayer.workspacePath, "msm_Node")
+        # if arcpy.Exists(os.path.join(nodeLayer.workspacePath, "msm_Node")):
+        #     nodeLayer = os.path.join(nodeLayer.workspacePath, "msm_Node")
 
-        nodesCount = int(arcpy.GetCount_management(nodeLayer)[0])
+        # nodesCount = int(arcpy.GetCount_management(nodeLayer)[0])
 
         node_i = manholeLayer.find_closest_node([x,y])
         node = manholeLayer.nodes[node_i].muid
@@ -230,7 +230,7 @@ class ManholeLayer(object):
                     for i, row in enumerate(cursor):
                         self.nodes.append(Node(row[0], row[1][0], row[1][1]))
 
-            self.nodes_kdtree = KDTree([(node.x, node.y) for node in self.nodes])
+            self.nodes_kdtree = cKDTree([(node.x, node.y) for node in self.nodes])
 
         else: 
             self.selectedLayer = None
