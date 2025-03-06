@@ -302,9 +302,9 @@ class Dandas2MULinks(object):
                         else:
                             skip = True
                     elif not "Ukendt" in  afloebkategori: # hvis KategoriAfloebKode ikke er stik, skelbr�nd, hovedledning eller internt (dvs. ukendt)
-                        skip = True 
+                        skip = True
                     else:
-                        msm_Node_Table["Description"] = "Ukendt" if not msm_Node_Table["Description"] else msm_Node_Table["Description"] + ", Ukendt"              
+                        msm_Node_Table["Description"] = "Ukendt" if not msm_Node_Table["Description"] else msm_Node_Table["Description"] + ", Ukendt"
                     if not skip:
                         
                         msm_Node_Cursor.insertRow([(float(nodes[nodei].find("XKoordinat").text),float(nodes[nodei].find("YKoordinat").text))]+msm_Node_Table.values())
@@ -604,7 +604,7 @@ class DDS2Tilbudsliste(object):
         pipes_nodes_order.filter.list = [r"All manholes first and then all pipes", r"[Manhole]-[Pipe]-[Manhole]"]
         pipes_nodes_order.value = r"All manholes first and then all pipes"
         
-        params = [manholes_shapefile, pipes_shapefile, write_depth, nodes_order, pipes_nodes_order] 
+        params = [manholes_shapefile, pipes_shapefile, write_depth, nodes_order, pipes_nodes_order]
         return params
 
     def isLicensed(self):
@@ -647,51 +647,83 @@ class DDS2Tilbudsliste(object):
                     return ", dybde %1.2f m" % (self.groundlevel - self.invertlevel)
                 else:
                     return ""
-            
+
+            def depth(self):
+                if self.invertlevel and self.groundlevel:
+                    return self.groundlevel - self.invertlevel
         class Pipe:
-            def __init__(self, muid, length, fromnode, tonode, diameter, lineno = -1, formatted_line = ""):
+            def __init__(self, muid, length, fromnode, tonode, diameter, material):
                 self.muid = muid
                 self.length = length
                 self.fromnode = fromnode
                 self.tonode = tonode
                 self.diameter = diameter if diameter else 0
-                self.lineno = lineno
+                self.lineno = -1
                 self.formatted_line = muid
-            
+                self.material = material
+
+            @property
+            def outer_diameter(self):
+                if self.material == "Plastic":
+                    diameter = self.diameter
+                    diameters = {0.1024: 0.11, 0.149: 0.16, 0.188: 0.2, 0.233: 0.25, 0.276: 0.3, 0.377: 0.4, 0.493: 0.5,
+                                 0.588: 0.6,
+                                 0.781: 0.8, 0.885: 0.9, 0.985: 1, 1.085: 1.1, 1.185: 1.2, 1.285: 1.3, 1.385: 1.4,
+                                 1.485: 1.5,
+                                 1.585: 1.6}
+                    diameters_by_index = [outer_diameter for outer_diameter in diameters.values()]
+                    if diameter in diameters:
+                        outer_diameter = diameters[diameter]
+                    else:
+                        dist = [abs(inner_diameter - diameter) for inner_diameter in diameters]
+                        outer_diameter = diameters_by_index[dist.index(min(dist))]
+                else:
+                    outer_diameter = self.diameter
+                return outer_diameter
+
+            def depth(self, nodes):
+                return np.mean([nodes[self.tonode].depth(), nodes[self.fromnode].depth()])
+
             def getPipeName(self):
                 if nodes_order == r"[Upstream Manhole]-[Downstream Manhole]":
                     return "%s-%s" % (pipe.fromnode, pipe.tonode)
                 else:
                     return "%s-%s" % (pipe.tonode, pipe.fromnode)
 
+        is_sqlite = True if ".sqlite" in arcpy.Describe(manhole_shapefile).catalogPath else False
         manholes = OrderedDict()
-        with arcpy.da.SearchCursor(manhole_shapefile, ["MUID", "InvertLevel", "GroundLevel", "Diameter"], where_clause = "Description <> 'Stikledning'") as cursor:
+        with arcpy.da.SearchCursor(manhole_shapefile, ["MUID", "InvertLevel", "GroundLevel", "Diameter"], where_clause = "Description <> 'Stikledning' OR Description IS NULL") as cursor:
             for row in cursor:
                 manholes[row[0]] = Manhole(row[0],row[1],row[2],row[3])
                 
         all_manholes = OrderedDict()
-        with arcpy.da.SearchCursor(all_manholes_shapefile, ["MUID", "InvertLevel", "GroundLevel", "Diameter"], where_clause = "Description <> 'Stikledning'") as cursor:
+        with arcpy.da.SearchCursor(arcpy.Describe(all_manholes_shapefile).catalogPath, ["MUID", "InvertLevel", "GroundLevel", "Diameter"], where_clause = "Description <> 'Stikledning' OR Description IS NULL") as cursor:
             for row in cursor:
                 all_manholes[row[0]] = Manhole(row[0],row[1],row[2],row[3])
                
         pipes = {}
-        with arcpy.da.SearchCursor(pipe_shapefile, ["MUID", "SHAPE@LENGTH", "FROMNODE", "TONODE", "Diameter"]) as cursor:
+        with arcpy.da.SearchCursor(pipe_shapefile, ["MUID", "SHAPE@LENGTH", "FROMNODEID" if is_sqlite else "FROMNODE", "TONODEID" if is_sqlite else "TONODE", "Diameter", "MaterialID"]) as cursor:
             for row in cursor:
-                pipes[row[0]] = Pipe(row[0],row[1],row[2],row[3], row[4])
+                pipes[row[0]] = Pipe(row[0],row[1],row[2],row[3], row[4], row[5])
         pipes = OrderedDict(sorted(pipes.items(), key = lambda item: item[1].diameter))
         
         for manhole in manholes.values():
-            manhole.formatted_line = u"\t\tBr�nd %s, �%1.0f mm plast%s\t\t\tsum\t\t\t" % (manhole.muid, manhole.diameter*1e3, manhole.getDepth())
+            manhole.formatted_line = u"Broend %s, oe%1.0f mm plast%s" % (manhole.muid, manhole.diameter*1e3, manhole.getDepth())
             
         for pipe in pipes.values():
-            if pipe.fromnode in all_manholes and pipe.tonode in all_manholes:
-                pipe.formatted_line = u"\t\tStr. %s, �%1.0f mm plast\tlbm\t%1.0f\t\t\t" % (pipe.getPipeName(), pipe.diameter*1e3, pipe.length)
+            # if pipe.fromnode in all_manholes and pipe.tonode in all_manholes:
+            arcpy.AddMessage(pipe.depth(all_manholes))
+            # pipe.formatted_line = u"\t\tStr. %s\toe%1.0f mm %s\tlbm\t%1.0f\t\t\t" % (pipe.getPipeName(), pipe.outer_diameter*1e3, "pl" if pipe.material == "Plastic" else "bt", pipe.length)
+            pipe.formatted_line = u"Str. %s\t%1.0f\t%s\t%1.0f\t%1.1f" % (
+                    pipe.getPipeName(), pipe.outer_diameter * 1e3, "pl" if pipe.material == "Plastic" else "bt", pipe.length, pipe.depth(all_manholes))
         
         # Each manhole and pipe is assigned a lineno, which determines the order that the object should appear in the tender documents
-        
+
         def getMaxLineno():
             return max(np.max([manhole.lineno for manhole in manholes.values()]), np.max([pipe.lineno for pipe in pipes.values()]))
-            
+
+        arcpy.AddMessage(pipes)
+
         def listParents(manhole): # Recursive loop that travels upstream and assigns an object the next lineno 
              parent_pipes = [pipe for pipe in pipes.values() if pipe.tonode == manhole.muid if pipe.fromnode in manholes]
              for parent_pipe in parent_pipes:
@@ -700,10 +732,10 @@ class DDS2Tilbudsliste(object):
                  listParents(manholes[parent_pipe.fromnode])
         
         # Either start travelling from a manhole that has no pipes downstream
-        for manhole in manholes.values():
-            if ([pipe.muid for pipe in pipes.values() if pipe.tonode == manhole.muid]  and not [pipe.muid for pipe in pipes.values() if pipe.fromnode == manhole.muid]):
-                manhole.lineno = getMaxLineno() + 1
-                listParents(manhole)
+        # for manhole in manholes.values():
+        #     if ([pipe.muid for pipe in pipes.values() if pipe.tonode == manhole.muid]  and not [pipe.muid for pipe in pipes.values() if pipe.fromnode == manhole.muid]):
+        #         manhole.lineno = getMaxLineno() + 1
+        #         listParents(manhole)
         
         # or start travelling from a pipe ending at a pipe that is not selected in ArcMap
         for pipe in pipes.values():
@@ -716,8 +748,8 @@ class DDS2Tilbudsliste(object):
                     arcpy.AddMessage(pipe.fromnode)
                     arcpy.AddMessage(pipe.tonode)
                     arcpy.AddMessage(pipe.muid)
-        
-        tender_text = u"" # all the text that should be copied/exported
+
+        tender_text = u"bob" # all the text that should be copied/exported
         if pipes_nodes_order == r"[Manhole]-[Pipe]-[Manhole]":
             for lineno in range(getMaxLineno()+1):
                 for line in [pipe.formatted_line for pipe in pipes.values() if pipe.lineno == lineno]:
@@ -731,8 +763,7 @@ class DDS2Tilbudsliste(object):
             for lineno in range(getMaxLineno()+1):
                 for line in [pipe.formatted_line for pipe in pipes.values() if pipe.lineno == lineno]:
                     tender_text += u"\n" + line
-            
-                
+
         tender_text = tender_text[1:]
         arcpy.AddMessage(tender_text)
         
@@ -746,11 +777,23 @@ class DDS2Tilbudsliste(object):
         # r.clipboard_clear()
         import subprocess
         def copy2clip(txt):
-            cmd='echo '+txt.strip()+'|clip'
-            # arcpy.AddMessage(cmd.encode("iso-8859-1"))
-            # arcpy.AddMessage(cmd.encode("iso-8859-1"))
-            return subprocess.check_call(cmd.encode("iso-8859-1"), shell=True)
+            # Convert da text to UTF-8 bytes (since Python 2.7 uses bytes natively)
+            if isinstance(txt, unicode):
+                txt = txt.encode('utf-8')
+            # Pipe da raw text directly into clip
+            process = subprocess.Popen(
+                'clip',
+                stdin=subprocess.PIPE,
+                shell=True
+            )
+            process.communicate(input=txt)  # Send da UTF-8 encoded bytes
+
+        # Example usage (with Unicode string)
+        # tender_text = u"Dette er en test med æ, ø, og å"
         copy2clip(tender_text)
+        arcpy.AddMessage(tender_text)
+
+        # copy2clip("ø")
         # r.clipboard_append(tender_text)
         # r.update()
         # r.destroy()
@@ -837,11 +880,11 @@ class CopyMikeUrbanFeatures(object):
                 database = re.findall(r"(.+)(?=\.mdb)", database[0])[0] + ".mdb"
                 parameters[0].value = database
 
-        if parameters[0].valueAsText:
-            MU_database = parameters[0].valueAsText
-            is_sqlite = True if ".sqlite" in MU_database else False
-            if is_sqlite:
-                parameters[3].enabled = False
+        # if parameters[0].valueAsText:
+        #     MU_database = parameters[0].valueAsText
+        #     is_sqlite = True if ".sqlite" in MU_database else False
+        #     if is_sqlite:
+        #         parameters[3].enabled = False
             
         return
 
@@ -858,7 +901,7 @@ class CopyMikeUrbanFeatures(object):
         msm_Nodes = parameters[1].values
         msm_Links = parameters[2].values
         ms_Catchments = parameters[3].values
-
+        arcpy.AddMessage((msm_Links, ".sqlite" in arcpy.Describe(msm_Links[0]).catalogPath))
         if (msm_Nodes and ".sqlite" in arcpy.Describe(msm_Nodes[0]).catalogPath) or (msm_Links and ".sqlite" in arcpy.Describe(msm_Links[0]).catalogPath) or (ms_Catchments and ".sqlite" in arcpy.Describe(ms_Catchments[0]).catalogPath):
             source_type = 'MUPlusDB'
         else:
@@ -945,6 +988,7 @@ class CopyMikeUrbanFeatures(object):
 
                         xml_txt[source_type_lineno] = xml_txt[source_type_lineno].replace("sourceTypeParameter",
                                                                                                 source_type)
+
                         # arcpy.AddMessage(sql_expression)
                     else:
                         arcpy.Append_management(selected, MU_database + "\msm_Node", schema_type = "NO_TEST")
@@ -985,6 +1029,25 @@ class CopyMikeUrbanFeatures(object):
                         xml_txt[msm_Link_where_clause_lineno] = re.sub('value *= *"[^"]+"',
                                                                        "value=\"MUID IN ('%s')\"" % "', '".join(MUIDs),
                                                                        xml_txt[msm_Link_where_clause_lineno])
+
+                        fields = [field.name.upper() for field in arcpy.ListFields(selected)]
+
+                        if "FROMNODEID" in fields:
+                            FROMNODEID_where_clause_lineno = \
+                                [i for i, line in enumerate(xml_txt) if 'property="FromNode' in line][0]
+                            xml_txt[FROMNODEID_where_clause_lineno] = xml_txt[FROMNODEID_where_clause_lineno].replace('property="FromNode"','property="FromNodeID"')
+
+                            TONODEID_where_clause_lineno = \
+                                [i for i, line in enumerate(xml_txt) if 'property="ToNode' in line][0]
+                            xml_txt[TONODEID_where_clause_lineno] = xml_txt[TONODEID_where_clause_lineno].replace('property="ToNode"','property="ToNodeID"')
+
+                        try:
+                            source_type_lineno = [i for i, line in enumerate(xml_txt) if 'sourceTypeParameter' in line][0]
+
+                            xml_txt[source_type_lineno] = xml_txt[source_type_lineno].replace("sourceTypeParameter",
+                                                                                          source_type)
+                        except Exception as e:
+                            pass
                     else:
                         try:
                             # arcpy.AddMessage([field.name.lower() for field in arcpy.ListFields(MU_database + "\msm_Link")])
@@ -1006,74 +1069,110 @@ class CopyMikeUrbanFeatures(object):
 
 
             if ms_Catchments:
-                # arcpy.AddMessage(ms_Catchments)
-                for i, ms_Catchment in enumerate(ms_Catchments):
-                    # arcpy.AddMessage(type(ms_Catchment))
-                    arcpy.AddMessage(arcpy.Describe(ms_Catchment).catalogPath)
-                    if not ".mdb" in arcpy.Describe(ms_Catchment).catalogPath:
-                        selected = arcpy.Select_analysis(ms_Catchment, "in_memory\ms_Catchment_%d" % (i))
+                arcpy.AddMessage(is_sqlite)
+                if is_sqlite:
+                    i = 0
+                    arcpy.AddMessage(ms_Catchments)
+                    reference_MU_database = os.path.dirname(arcpy.Describe(ms_Catchments[0]).catalogPath)
+                    arcpy.AddMessage(reference_MU_database)
+                    source_lineno = \
+                    [i for i, line in enumerate(xml_txt) if '<JobPropertyValue property="Source"' in line][0]
+                    xml_txt[source_lineno] = re.sub('value *= *"[^"]+"', 'value="%s"' % reference_MU_database,
+                                                    xml_txt[source_lineno])
 
-                        ms_CatchmentMUIDs = [row[0] for row in arcpy.da.SearchCursor(selected,"MUID")]
-                        duplicateMUIDs = [row[0] for row in arcpy.da.SearchCursor(os.path.join(MU_database,"msm_Catchment"),"MUID",where_clause = "MUID IN ('%s')" % ("', '".join(ms_CatchmentMUIDs)))]
-                        # duplicateHModA = [row[0] for row in arcpy.da.SearchCursor(os.path.join(MU_database,"msm_HModA"),"CatchID",where_clause = "CatchID IN ('%s')" % ("', '".join(ms_CatchmentMUIDs)))]
-                        duplicateCatchCon = [row[0] for row in arcpy.da.SearchCursor(os.path.join(MU_database,"msm_CatchCon"),"CatchID",where_clause = "CatchID IN ('%s')" % ("', '".join(ms_CatchmentMUIDs)))]
 
-                        errorMessage = ""
-                        if duplicateMUIDs:
-                            errorMessage += "Catchments with MUID ('%s') already exist in Catchment Layer in Mike Urban Database" % ("(', '".join(duplicateMUIDs))
-                        # if duplicateHModA:
-                        #     errorMessage = errorMessage + "\n" if errorMessage else ""
-                        #     errorMessage += "Catchments with MUID ('%s') already exist in Model Records (msm_HModA) in Mike Urban Database" % ("(', '".join(duplicateHModA))
-                        if duplicateCatchCon:
-                            errorMessage = errorMessage + "\n" if errorMessage else ""
-                            errorMessage += "Catchments with MUID ('%s') already exist in Catchment Connections (msm_CatchCon) in Mike Urban Database" % ("(', '".join(duplicateCatchCon))
-                        if errorMessage:
-                            arcpy.AddWarning(errorMessage)
-                        if not errorMessage or pythonaddins.MessageBox("%s\nTransfer catchments anyway?" % (errorMessage), "Confirm Transfer", 1) == "OK":
-                            arcpy.Append_management(selected, os.path.join(MU_database,"ms_Catchment"), schema_type = "NO_TEST")
-                            fields = [field.name.lower() for field in arcpy.ListFields(selected)]
-                            def readField(field):
-                                if field.lower() in fields:
-                                    return field
-                                else:
-                                    return "SHAPE@XY"
-                            with arcpy.da.SearchCursor(selected,["MUID","ImpArea","NodeID", readField("ParAID"), readField("RedFactor"), readField("ConcTime"), readField("InitLoss")]) as catchmentCursor:
-                                with arcpy.da.InsertCursor(os.path.join(MU_database,"msm_CatchCon"),["CatchID","NodeID","TypeNo"]) as cursor:
-                                    for row in catchmentCursor:
-                                        nID = 0 if not row[2] else row[2]
-                                        cursor.insertRow((row[0],nID,1))
-                                catchmentCursor.reset()
-                                with arcpy.da.InsertCursor(os.path.join(MU_database,"msm_HModA"),["CatchID","ImpArea","ParAID","LocalNo","ConcTime","RFactor","ILoss","CoeffNo","TACoeff"]) as cursor:
-                                    for row in catchmentCursor:
-                                        iArea = 0 if not row[1] else row[1]
-                                        cursor.insertRow((row[0],iArea,"-DEFAULT-" if not row[3] or type(row[3]) is tuple else row[3],
-                                                          0,
-                                                          7 if not row[5] or type(row[5]) is tuple else row[5],
-                                                          0.9 if not row[4] or type(row[4]) is tuple else row[4],
-                                                          0.0006 if not row[6] or type(row[6]) is tuple else row[6],
-                                                          0,0.33))
-                    else:
-                        input_database = arcpy.Describe(ms_Catchment).catalogPath.split(".mdb")[0] + ".mdb"
-                        selected = arcpy.Select_analysis(ms_Catchment, "in_memory\ms_Catchment_%d" % (i))
-                        arcpy.Append_management(selected, os.path.join(MU_database,"ms_Catchment"),"NO_TEST")
-                        MUIDs = [row[0] for row in arcpy.da.SearchCursor(selected, ["MUID"])]
-                        # arcpy.management.Append(selected, MU_database + "\ms_Catchment")
-                        arcpy.AddMessage( "MUID IN ('%s')" % "', '".join(MUIDs))
-                        selected_HModA = arcpy.TableSelect_analysis(os.path.join(input_database, "msm_HModA"), "in_memory\msm_HModA", where_clause = "CatchID IN ('%s')" % "', '".join(MUIDs))[0]
-                        # fields = [field.name for field in arcpy.ListFields(MU_database + "\msm_HModA") if not field.name == "OBJECTID"]
-                        # arcpy.AddMessage(fields)    
-                        # with arcpy.da.InsertCursor(MU_database + "\msm_HModA", ["CatchID","ImpArea","ParAID","LocalNo","ConcTime","RFactor","ILoss","CoeffNo","TACoeff"]) as target_cursor:
-                        # with arcpy.da.SearchCursor(os.path.join(input_database, "msm_HModA"), fields, where_clause = "CatchID IN ('%s')" % "', '".join(MUIDs)) as reference_cursor:
-                        # for row in reference_cursor:
-                        # arcpy.AddMessage(row)
-                        # target_cursor.insertRow(("gay",0,"-DEFAULT-",0,7,0.9,0.0006,0,0.33))
-                        # # arcpy.AddMessage(selected_HModA)
-                        # arcpy.CopyFeatures_management(selected_HModA, "K:\Hydrauliske modeller\Papirkurv\SonsOfKemet")
-                        arcpy.management.Append(selected_HModA, MU_database + "\msm_HModA")
-                        selected_CatchCon = arcpy.TableSelect_analysis(os.path.join(input_database, "msm_CatchCon"), "in_memory\msm_CatchCon", where_clause = "CatchID IN ('%s')" % "', '".join(MUIDs))[0]
-                        arcpy.AddMessage("CatchID IN ('%s')" % "', '".join(MUIDs))
-                        arcpy.AddMessage([row[0] for row in arcpy.da.SearchCursor(selected_CatchCon, ["CatchID"])])
-                        arcpy.management.Append(selected_CatchCon, MU_database + "\msm_CatchCon")
+                    if len([i for i, line in enumerate(xml_txt) if 'sourceTypeParameter' in line])>0:
+                        source_type_lineno = [i for i, line in enumerate(xml_txt) if 'sourceTypeParameter' in line][0]
+
+                        xml_txt[source_type_lineno] = xml_txt[source_type_lineno].replace("sourceTypeParameter",
+                                                                                          source_type)
+
+                    selected = arcpy.Select_analysis(ms_Catchments[0], "in_memory\msm_Catchment_%d" % (i))
+                    MUIDs = [row[0] for row in arcpy.da.SearchCursor(selected, ["MUID"])]
+                    msm_Catchment_where_clause_lineno = \
+                        [i for i, line in enumerate(xml_txt) if '"msm_Catchment_where_clause"' in line][0]
+                    xml_txt[msm_Catchment_where_clause_lineno] = re.sub('value *= *"[^"]+"',
+                                                                   "value=\"MUID IN ('%s')\"" % "', '".join(MUIDs),
+                                                                   xml_txt[msm_Catchment_where_clause_lineno])
+
+                    msm_Catchcon_where_clause_lineno = \
+                        [i for i, line in enumerate(xml_txt) if '"msm_Catchcon_where_clause"' in line][0]
+                    xml_txt[msm_Catchcon_where_clause_lineno] = re.sub('value *= *"[^"]+"',
+                                                                   "value=\"CatchID IN ('%s')\"" % "', '".join(MUIDs),
+                                                                   xml_txt[msm_Catchcon_where_clause_lineno])
+
+                    xml_txt = [line.replace(r'property="msm_Catchment" value="False"','property="msm_Catchment" value="True"')  for line in xml_txt]
+                    xml_txt = [line.replace(r'property="msm_CatchCon" value="False"',
+                                            'property="msm_CatchCon" value="True"') for line in xml_txt]
+                else:
+                    # arcpy.AddMessage(ms_Catchments)
+                    for i, ms_Catchment in enumerate(ms_Catchments):
+                        # arcpy.AddMessage(type(ms_Catchment))
+                        arcpy.AddMessage(arcpy.Describe(ms_Catchment).catalogPath)
+                        if not ".mdb" in arcpy.Describe(ms_Catchment).catalogPath:
+                            selected = arcpy.Select_analysis(ms_Catchment, "in_memory\ms_Catchment_%d" % (i))
+
+                            ms_CatchmentMUIDs = [row[0] for row in arcpy.da.SearchCursor(selected,"MUID")]
+                            duplicateMUIDs = [row[0] for row in arcpy.da.SearchCursor(os.path.join(MU_database,"msm_Catchment"),"MUID",where_clause = "MUID IN ('%s')" % ("', '".join(ms_CatchmentMUIDs)))]
+                            # duplicateHModA = [row[0] for row in arcpy.da.SearchCursor(os.path.join(MU_database,"msm_HModA"),"CatchID",where_clause = "CatchID IN ('%s')" % ("', '".join(ms_CatchmentMUIDs)))]
+                            duplicateCatchCon = [row[0] for row in arcpy.da.SearchCursor(os.path.join(MU_database,"msm_CatchCon"),"CatchID",where_clause = "CatchID IN ('%s')" % ("', '".join(ms_CatchmentMUIDs)))]
+
+                            errorMessage = ""
+                            if duplicateMUIDs:
+                                errorMessage += "Catchments with MUID ('%s') already exist in Catchment Layer in Mike Urban Database" % ("(', '".join(duplicateMUIDs))
+                            # if duplicateHModA:
+                            #     errorMessage = errorMessage + "\n" if errorMessage else ""
+                            #     errorMessage += "Catchments with MUID ('%s') already exist in Model Records (msm_HModA) in Mike Urban Database" % ("(', '".join(duplicateHModA))
+                            if duplicateCatchCon:
+                                errorMessage = errorMessage + "\n" if errorMessage else ""
+                                errorMessage += "Catchments with MUID ('%s') already exist in Catchment Connections (msm_CatchCon) in Mike Urban Database" % ("(', '".join(duplicateCatchCon))
+                            if errorMessage:
+                                arcpy.AddWarning(errorMessage)
+                            if not errorMessage or pythonaddins.MessageBox("%s\nTransfer catchments anyway?" % (errorMessage), "Confirm Transfer", 1) == "OK":
+                                arcpy.Append_management(selected, os.path.join(MU_database,"ms_Catchment"), schema_type = "NO_TEST")
+                                fields = [field.name.lower() for field in arcpy.ListFields(selected)]
+                                def readField(field):
+                                    if field.lower() in fields:
+                                        return field
+                                    else:
+                                        return "SHAPE@XY"
+                                with arcpy.da.SearchCursor(selected,["MUID","ImpArea","NodeID", readField("ParAID"), readField("RedFactor"), readField("ConcTime"), readField("InitLoss")]) as catchmentCursor:
+                                    with arcpy.da.InsertCursor(os.path.join(MU_database,"msm_CatchCon"),["CatchID","NodeID","TypeNo"]) as cursor:
+                                        for row in catchmentCursor:
+                                            nID = 0 if not row[2] else row[2]
+                                            cursor.insertRow((row[0],nID,1))
+                                    catchmentCursor.reset()
+                                    with arcpy.da.InsertCursor(os.path.join(MU_database,"msm_HModA"),["CatchID","ImpArea","ParAID","LocalNo","ConcTime","RFactor","ILoss","CoeffNo","TACoeff"]) as cursor:
+                                        for row in catchmentCursor:
+                                            iArea = 0 if not row[1] else row[1]
+                                            cursor.insertRow((row[0],iArea,"-DEFAULT-" if not row[3] or type(row[3]) is tuple else row[3],
+                                                              0,
+                                                              7 if not row[5] or type(row[5]) is tuple else row[5],
+                                                              0.9 if not row[4] or type(row[4]) is tuple else row[4],
+                                                              0.0006 if not row[6] or type(row[6]) is tuple else row[6],
+                                                              0,0.33))
+                        else:
+                            input_database = arcpy.Describe(ms_Catchment).catalogPath.split(".mdb")[0] + ".mdb"
+                            selected = arcpy.Select_analysis(ms_Catchment, "in_memory\ms_Catchment_%d" % (i))
+                            arcpy.Append_management(selected, os.path.join(MU_database,"ms_Catchment"),"NO_TEST")
+                            MUIDs = [row[0] for row in arcpy.da.SearchCursor(selected, ["MUID"])]
+                            # arcpy.management.Append(selected, MU_database + "\ms_Catchment")
+                            arcpy.AddMessage( "MUID IN ('%s')" % "', '".join(MUIDs))
+                            selected_HModA = arcpy.TableSelect_analysis(os.path.join(input_database, "msm_HModA"), "in_memory\msm_HModA", where_clause = "CatchID IN ('%s')" % "', '".join(MUIDs))[0]
+                            # fields = [field.name for field in arcpy.ListFields(MU_database + "\msm_HModA") if not field.name == "OBJECTID"]
+                            # arcpy.AddMessage(fields)
+                            # with arcpy.da.InsertCursor(MU_database + "\msm_HModA", ["CatchID","ImpArea","ParAID","LocalNo","ConcTime","RFactor","ILoss","CoeffNo","TACoeff"]) as target_cursor:
+                            # with arcpy.da.SearchCursor(os.path.join(input_database, "msm_HModA"), fields, where_clause = "CatchID IN ('%s')" % "', '".join(MUIDs)) as reference_cursor:
+                            # for row in reference_cursor:
+                            # arcpy.AddMessage(row)
+                            # target_cursor.insertRow(("gay",0,"-DEFAULT-",0,7,0.9,0.0006,0,0.33))
+                            # # arcpy.AddMessage(selected_HModA)
+                            # arcpy.CopyFeatures_management(selected_HModA, "K:\Hydrauliske modeller\Papirkurv\SonsOfKemet")
+                            arcpy.management.Append(selected_HModA, MU_database + "\msm_HModA")
+                            selected_CatchCon = arcpy.TableSelect_analysis(os.path.join(input_database, "msm_CatchCon"), "in_memory\msm_CatchCon", where_clause = "CatchID IN ('%s')" % "', '".join(MUIDs))[0]
+                            arcpy.AddMessage("CatchID IN ('%s')" % "', '".join(MUIDs))
+                            arcpy.AddMessage([row[0] for row in arcpy.da.SearchCursor(selected_CatchCon, ["CatchID"])])
+                            arcpy.management.Append(selected_CatchCon, MU_database + "\msm_CatchCon")
             if is_sqlite:
                 import tempfile
                 output_path = os.path.join(tempfile.gettempdir(), '%s.xml' % os.path.basename(reference_MU_database).split(".")[0])
