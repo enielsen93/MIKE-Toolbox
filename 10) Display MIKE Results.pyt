@@ -1410,6 +1410,25 @@ class DisplayMIKE1DResults(object):
         display_type.filter.list = ["Flood volume", "Flood Depth", "Max Elevation / Headloss", "Link Depth Difference"]
         display_type.value = "Flood Volume"
 
+        # res1d_filepath  = arcpy.Parameter(
+        #     displayName="res1d Filepath",
+        #     name="res1d_filepath",
+        #     datatype="File",
+        #     parameterType="Optional",
+        #     direction="Input")
+        # res1d_filepath.filter.list = ["res1d"]
+        #
+        # python3_path = arcpy.Parameter(
+        #     displayName="Python 3 Filepath",
+        #     name="python3_path",
+        #     datatype="File",
+        #     parameterType="Optional",
+        #     category="IF RES1D: Python 3 Path with MIKEIO and Arcpy",
+        #     direction="Input")
+        # python3_path.filter.list = ["exe"]
+        #
+        # python3_path.value = r"C:\Users\elnn\AppData\Local\anaconda3\envs\myenv_py3_v2\python.exe"
+
         parameters = [folder, node_featureclass, reach_featureclass, display_type]
 
         return parameters
@@ -1418,6 +1437,8 @@ class DisplayMIKE1DResults(object):
         return True
 
     def updateParameters(self, parameters):  # optional
+        # res1d_filepath = parameters[4]
+        # python3_path = parameters[5]
         if parameters[0].altered and parameters[0].value and not parameters[1].value and not parameters[2].value:
             folder = parameters[0].ValueAsText
             import glob
@@ -1435,7 +1456,10 @@ class DisplayMIKE1DResults(object):
                     parameters[2].Value = file[0]
                     break
 
-
+        # if res1d_filepath.value:
+        #     parameters[0].enabled = False
+        #     parameters[1].enabled = False
+        #     parameters[2].enabled = False
         #
         # if parameters[0].altered:
         #     parameters[3].value = getAvailableFilename(os.path.join(arcpy.env.scratchGDB, os.path.basename(parameters[0].ValueAsText)).replace(".ERF","_NodeFlood"))
@@ -1450,6 +1474,8 @@ class DisplayMIKE1DResults(object):
         nodes_featureclass = parameters[1].ValueAsText
         reaches_featureclass = parameters[2].ValueAsText
         display_type = parameters[3].ValueAsText
+        # res1d_filepath = parameters[4].ValueAsText
+        # python3_path = parameters[5].ValueAsText
         arcpy.AddMessage(display_type)
 
         mxd = arcpy.mapping.MapDocument("CURRENT")
@@ -1538,6 +1564,20 @@ class DisplayMIKE1DResults(object):
                     update_layer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))),
                                                    workspace_type, os.path.basename(source))
             return update_layer
+
+        # if res1d_filepath:
+        #     if not os.path.exists(python3_path):
+        #         raise(Exception("Python Path %s does not exist" % (python3_path)))
+        #     raise(Exception("Feature not supported"))
+        #     import subprocess
+        #     call = ["cmd.exe /C", python3_path,  os.path.join(os.path.dirname(os.path.realpath(__file__)), r"MIKEio1D Notebooks\Read MIKE1D Results.py"), res1d_filepath]
+        #     arcpy.AddMessage(call)
+        #     process = subprocess.Popen(call, stdout = subprocess.PIPE,
+        #                                stderr = subprocess.PIPE, universal_newlines = True)
+        #
+        #     stdout, stderr = process.communicate()
+        #     arcpy.AddMessage(stdout)
+        #     arcpy.AddMessage(stderr)
 
         if reaches_featureclass:
             if "depth difference" in display_type.lower():
