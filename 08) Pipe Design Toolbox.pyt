@@ -1336,14 +1336,22 @@ class CopyDiameter(object):
                             # arcpy.AddMessage((reference_network.links[reference.muid].fromnode, reference_network.links[reference.muid].tonode))
                             # arcpy.AddMessage((reference_network.links[reference.muid].fromnode,
                             #                   reference_network.links[reference.muid].tonode))
-                            match = [reference for reference in references if reference_network.links[reference.muid].fromnode.lower() == target_network.links[MUID].fromnode.lower() and reference_network.links[reference.muid].tonode.lower() == target_network.links[MUID].tonode.lower()
-                                     if reference.muid in reference_network.links and MUID in target_network.links]
+                            try:
+                                match = [reference for reference in references if reference_network.links[reference.muid].fromnode.lower() == target_network.links[MUID].fromnode.lower() and reference_network.links[reference.muid].tonode.lower() == target_network.links[MUID].tonode.lower()
+                                         if reference.muid in reference_network.links and MUID in target_network.links]
+                            except Exception as e:
+                                for reference in references:
+                                    if not reference_network.links[reference.muid].fromnode or not reference_network.links[reference.muid].tonode:
+                                        arcpy.AddError("Could not find fromnode or tonode for link %s" % reference.muid)
+                                arcpy.AddError("Could not match fromnode / tonode for link %s" % (MUID))
+
                             # arcpy.AddMessage(match)
                         else:
                             continue
                         # match = [reference for reference in references if getattr(reference, "muid") == match_MUID][0]
                     else:
-                        arcpy.AddMessage(MUID)
+                        pass
+                        # arcpy.AddMessage(MUID)
 
                         match = [reference for reference in references if getattr(reference, "muid") == MUID]
                     if match:
@@ -1439,7 +1447,6 @@ class InterpolateInvertLevels(object):
             datatype="Boolean",
             parameterType="optional",
             direction="Input")
-        use_slope_from_upstream.enabled = False
         use_slope_from_upstream.category = "Use Fixed Slope"
         use_slope_from_upstream.value = True
             
@@ -1449,7 +1456,6 @@ class InterpolateInvertLevels(object):
             datatype="Boolean",
             parameterType="optional",
             direction="Input")
-        use_slope_from_downstream.enabled = False
         use_slope_from_downstream.category = "Use Fixed Slope"
 
         parameters = [pipe_layer, usePipeElevations, fixed_slope, use_slope_from_upstream, use_slope_from_downstream]
@@ -1459,13 +1465,6 @@ class InterpolateInvertLevels(object):
         return True
 
     def updateParameters(self, parameters):
-        if parameters[2].value is not None:
-            parameters[3].enabled = True
-            parameters[4].enabled = True
-        else:
-            parameters[3].enabled = False
-            parameters[4].enabled = False
-        
         if not parameters[0].value:
             mxd = arcpy.mapping.MapDocument("CURRENT")
             links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
@@ -2087,8 +2086,8 @@ class CalculateSlopeOfPipe(object):
 
 class ResetUpLevelDwlevel(object):
     def __init__(self):
-        self.label = "5) Set Uplevel and Dwlevel to NULL if equal to invert level"
-        self.description = "5) Set Uplevel and Dwlevel to NULL if equal to invert level"
+        self.label = "5) Set Uplevel and Dwlevel to NULL"
+        self.description = "5) Set Uplevel and Dwlevel to NULL"
         self.canRunInBackground = False
 
     def getParameterInfo(self):
@@ -2101,7 +2100,14 @@ class ResetUpLevelDwlevel(object):
             parameterType="Required",
             direction="Input")
 
-        parameters = [pipe_layer]
+        if_equal_to_invert_level = arcpy.Parameter(
+            displayName="Only do it for links where uplevel and dwlevel are already equal to Invert Level?",
+            name="if_equal_to_invert_level",
+            datatype="Boolean",
+            parameterType="optional",
+            direction="Input")
+
+        parameters = [pipe_layer, if_equal_to_invert_level]
         return parameters
 
     def isLicensed(self):
@@ -2123,11 +2129,25 @@ class ResetUpLevelDwlevel(object):
 
     def execute(self, parameters, messages):
         pipe_layer = parameters[0].Value
+        if_equal_to_invert_level = parameters[1].Value
 
-        links_OID = [row[0] for row in arcpy.da.SearchCursor(pipe_layer, ["OID@"])]
-        if len(links_OID) == 0:
-            links_OID = [row[0] for row in arcpy.da.SearchCursor(arcpy.Describe(pipe_layer).catalogPath, ["OID@"])]
-        OID_fieldname = arcpy.Describe(pipe_layer).OIDFieldName
+        is_sqlite = True if ".sqlite" in arcpy.Describe(pipe_layer).catalogPath else False
+
+        if not is_sqlite:
+            links_OID = [row[0] for row in arcpy.da.SearchCursor(pipe_layer, ["OID@"])]
+            if len(links_OID) == 0:
+                links_OID = [row[0] for row in arcpy.da.SearchCursor(arcpy.Describe(pipe_layer).catalogPath, ["OID@"])]
+            OID_fieldname = arcpy.Describe(pipe_layer).OIDFieldName
+        else:
+            links_OID = [row[0] for row in arcpy.da.SearchCursor(pipe_layer, ["MUID"])]
+            if len(links_OID) == 0:
+                links_OID = [row[0] for row in arcpy.da.SearchCursor(arcpy.Describe(pipe_layer).catalogPath, ["MUID"])]
+            OID_fieldname = "MUID"
+            if if_equal_to_invert_level:
+                where_clause = "%s IN ('%s') AND (UpLevel IS NOT NULL OR DwLevel IS NOT NULL)" % (
+                    OID_fieldname, "', '".join([str(OID) for OID in links_OID]))
+            else:
+                where_clause = "%s IN ('%s')" % (OID_fieldname, "', '".join([str(OID) for OID in links_OID]))
 
         MU_database = os.path.dirname(arcpy.Describe(pipe_layer).catalogPath).replace("\mu_Geometry", "")
 
@@ -2135,38 +2155,55 @@ class ResetUpLevelDwlevel(object):
 
         nodes_invert_level = {row[0]: row[1] for row in arcpy.da.SearchCursor(msm_Node, ["MUID", "InvertLevel"])}
 
-        where_clause = "%s IN (%s) AND (UpLevel IS NOT NULL OR DwLevel IS NOT NULL)" % (
-            OID_fieldname, ', '.join([str(OID) for OID in links_OID]))
-
         network = networker.NetworkLinks(MU_database, map_only="link", filter_sql_query = where_clause)
 
-        edit = arcpy.da.Editor(MU_database)
-        edit.startEditing(False, True)
-        edit.startOperation()
+        if is_sqlite:
+            with sqlite3.connect(
+                    MU_database) as connection:
+                update_cursor = connection.cursor()
+                arcpy.AddMessage(where_clause)
+                with arcpy.da.SearchCursor(arcpy.Describe(pipe_layer).catalogPath.replace("!delete!",""), ["MUID", "uplevel", "dwlevel"],
+                                           where_clause=where_clause) as cursor:
+                    for row in cursor:
+                        uplevel = row[1]
+                        dwlevel = row[2]
+                        if not if_equal_to_invert_level or row[1] == nodes_invert_level[network.links[row[0]].fromnode]:
+                            update_cursor.execute("UPDATE msm_Link SET uplevel = NULL WHERE MUID = '%s'" % (row[0]))
+                            arcpy.AddMessage("Set pipe %s uplevel to NULL" % (row[0]))
+                        if not if_equal_to_invert_level or row[2] == nodes_invert_level[
+                            network.links[row[0]].tonode]:
+                            update_cursor.execute("UPDATE msm_Link SET dwlevel = NULL WHERE MUID = '%s'" % (row[0]))
+                            arcpy.AddMessage("Set pipe %s dwlevel to NULL" % (row[0]))
+                connection.commit()
+        else:
+            edit = arcpy.da.Editor(MU_database)
+            edit.startEditing(False, True)
+            edit.startOperation()
 
-        links_count = np.sum([1 for row in arcpy.da.SearchCursor(arcpy.Describe(pipe_layer).catalogPath, ["MUID"],
-                                                               where_clause = where_clause)])
-        arcpy.SetProgressor("step", "Setting UpLevel and DwLevel", 0, links_count, 1)
-        with arcpy.da.UpdateCursor(arcpy.Describe(pipe_layer).catalogPath, ["MUID", "UpLevel", "DwLevel"],
-                                   where_clause=where_clause) as cursor:
-            for row_i, row in enumerate(cursor):
-                arcpy.SetProgressorPosition(row_i)
-                try:
-                    uplevel = row[1]
-                    dwlevel = row[2]
-                    if row[1] == nodes_invert_level[network.links[row[0]].fromnode]:
-                        row[1] = None
-                        arcpy.AddMessage("Set UpLevel for %s to Null" % (row[0]))
-                    if row[2] == nodes_invert_level[network.links[row[0]].tonode]:
-                        row[2] = None
-                        arcpy.AddMessage("Set DwLevel for %s to Null" % (row[0]))
-                    cursor.updateRow(row)
-                except Exception as e:
-                    arcpy.AddError(traceback.format_exc())
-                    arcpy.AddError(row)
-                    raise(e)
-        edit.stopOperation()
-        edit.stopEditing(True)
+            links_count = np.sum([1 for row in arcpy.da.SearchCursor(arcpy.Describe(pipe_layer).catalogPath, ["MUID"],
+                                                                   where_clause = where_clause)])
+            arcpy.SetProgressor("step", "Setting UpLevel and DwLevel", 0, links_count, 1)
+            with arcpy.da.UpdateCursor(arcpy.Describe(pipe_layer).catalogPath, ["MUID", "UpLevel", "DwLevel"],
+                                       where_clause=where_clause) as cursor:
+                for row_i, row in enumerate(cursor):
+                    arcpy.SetProgressorPosition(row_i)
+                    try:
+                        uplevel = row[1]
+                        dwlevel = row[2]
+                        if row[1] == nodes_invert_level[network.links[row[0]].fromnode]:
+                            row[1] = None
+                            arcpy.AddMessage("Set UpLevel for %s to Null" % (row[0]))
+                        if row[2] == nodes_invert_level[network.links[row[0]].tonode]:
+                            row[2] = None
+                            arcpy.AddMessage("Set DwLevel for %s to Null" % (row[0]))
+                        cursor.updateRow(row)
+                    except Exception as e:
+                        arcpy.AddError(traceback.format_exc())
+                        arcpy.AddError(row)
+                        raise(e)
+            edit.stopOperation()
+            edit.stopEditing(True)
+
         return
 
 
