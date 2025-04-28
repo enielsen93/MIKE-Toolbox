@@ -1407,8 +1407,8 @@ class DisplayMIKE1DResults(object):
             parameterType="Optional",
             multiValue=True,
             direction="Input")
-        display_type.filter.list = ["Flood volume", "Flood Depth", "Max Elevation / Headloss", "Link Depth Difference"]
-        display_type.value = "Flood Volume"
+        display_type.filter.list = ["Flood volume", "Flood Depth", "Max Elevation / Headloss", "Peak Discharge", "Link Depth Difference"]
+        display_type.value = ["Flood Volume", "Peak Discharge"]
 
         # res1d_filepath  = arcpy.Parameter(
         #     displayName="res1d Filepath",
@@ -1441,20 +1441,38 @@ class DisplayMIKE1DResults(object):
         # python3_path = parameters[5]
         if parameters[0].altered and parameters[0].value and not parameters[1].value and not parameters[2].value:
             folder = parameters[0].ValueAsText
-            import glob
-            shp_files = glob.glob(os.path.join(folder, "*.shp"))
-            file_mod_times = [(file, os.path.getmtime(file)) for file in shp_files]
-            sorted_files = sorted(file_mod_times, key=lambda x: x[1], reverse = True)
-            # parameters[1].Value = sorted_files[0][0]
-            for file in sorted_files:
-                if "nodes" in file[0]:
-                    parameters[1].Value = file[0]
+            import glob, os
+
+            # Gather both shapefiles and file geodatabases
+            candidate_files = glob.glob(os.path.join(folder, "*.shp"))
+            candidate_files.extend(glob.glob(os.path.join(folder, "*.gdb")))
+
+            # Get modification times and sort the candidates (newest first)
+            file_mod_times = [(file, os.path.getmtime(file)) for file in candidate_files]
+            sorted_files = sorted(file_mod_times, key=lambda x: x[1], reverse=True)
+
+            # Assign the newest file containing "nodes" to parameters[1]
+            for file, _ in sorted_files:
+                if "gdb" in file:
+                    files_inside_gdb = [os.path.join(dirpath, f) for dirpath, _, files in
+                     arcpy.da.Walk(file,
+                                   datatype="FeatureClass") for f in files]
+                    for subfile in files_inside_gdb:
+                        if "nodes" in subfile.lower():
+                            parameters[1].value = os.path.join(file, subfile)
+                        elif "reaches" in subfile.lower():
+                            parameters[2].value = os.path.join(file, subfile)
+                    break
+                if "nodes" in file:
+                    parameters[1].Value = file
                     break
 
-            for file in sorted_files:
-                if "links" in file[0]:
-                    parameters[2].Value = file[0]
-                    break
+            # Assign the newest file containing "links" to parameters[2]
+            if not parameters[2].Value:
+                for file, _ in sorted_files:
+                    if "links" in file:
+                        parameters[2].Value = file
+                        break
 
         # if res1d_filepath.value:
         #     parameters[0].enabled = False
@@ -1481,6 +1499,16 @@ class DisplayMIKE1DResults(object):
         mxd = arcpy.mapping.MapDocument("CURRENT")
         df = arcpy.mapping.ListDataFrames(mxd)[0]
 
+        empty_group_mapped = arcpymapping.LayerFile(os.path.dirname(
+            os.path.realpath(__file__)) + r"\Data\EmptyGroup.lyr") if arcgis_pro else arcpy.mapping.Layer(
+            os.path.dirname(os.path.realpath(__file__)) + r"\Data\EmptyGroup.lyr")
+        empty_group = df.addLayer(empty_group_mapped) if arcgis_pro else arcpymapping.AddLayer(df, empty_group_mapped,
+                                                                                               "TOP")
+        empty_group_layer = df.listLayers('Empty Group')[0] if arcgis_pro else \
+            arcpymapping.ListLayers(mxd, "Empty Group", df)[0]
+        if ".gdb" in nodes_featureclass or ".gdb" in reaches_featureclass:
+            empty_group_layer.name = os.path.basename(os.path.dirname(nodes_featureclass)).replace(".gdb","") if nodes_featureclass else os.path.dirname(reaches_featureclass)
+
         def addLayer(layer_source, source, group=None, workspace_type="ACCESS_WORKSPACE", new_name=None,
                      definition_query=None):
             if ".sqlite" in source:
@@ -1498,7 +1526,7 @@ class DisplayMIKE1DResults(object):
                         arcpymapping.AddLayer(df, source_layer, "TOP")
 
                 if not arcgis_pro: update_layer = df.listLayers(mxd, source_layer.name, df)[0] if arcgis_pro else \
-                arcpy.mapping.ListLayers(mxd, source_layer.name, df)[0]
+                    arcpy.mapping.ListLayers(mxd, source_layer.name, df)[0]
 
                 if arcgis_pro:
                     new_connection_properties = update_layer.connectionProperties
@@ -1523,15 +1551,6 @@ class DisplayMIKE1DResults(object):
                         update_layer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))),
                                                        workspace_type, os.path.basename(source))
 
-                # layer_source_mike_plus = layer_source.replace("MOUSE", "MIKE+") if "MOUSE" in layer_source and os.path.exists(layer_source.replace("MOUSE", "MIKE+")) else None
-                # layer_source = layer_source_mike_plus if layer_source_mike_plus else layer_source
-                # layer = arcpymapping.Layer(layer_source)
-                # update_layer.visible = layer.visible
-                # update_layer.labelClasses = layer.labelClasses
-                # update_layer.showLabels = layer.showLabels
-                # update_layer.name = layer.name
-                # update_layer.definitionQuery = definition_query
-
                 try:
                     arcpymapping.UpdateLayer(df, update_layer, layer, symbology_only=True)
                 except Exception as e:
@@ -1551,7 +1570,7 @@ class DisplayMIKE1DResults(object):
                     else:
                         arcpymapping.AddLayer(df, layer, "TOP")
                 update_layer = df.listLayers(layer.listLayers()[0].name)[0] if arcgis_pro else \
-                arcpymapping.ListLayers(mxd, layer.name, df)[0]
+                    arcpymapping.ListLayers(mxd, layer.name, df)[0]
                 if definition_query:
                     update_layer.definitionQuery = definition_query
                 if new_name:
@@ -1565,62 +1584,51 @@ class DisplayMIKE1DResults(object):
                                                    workspace_type, os.path.basename(source))
             return update_layer
 
-        # if res1d_filepath:
-        #     if not os.path.exists(python3_path):
-        #         raise(Exception("Python Path %s does not exist" % (python3_path)))
-        #     raise(Exception("Feature not supported"))
-        #     import subprocess
-        #     call = ["cmd.exe /C", python3_path,  os.path.join(os.path.dirname(os.path.realpath(__file__)), r"MIKEio1D Notebooks\Read MIKE1D Results.py"), res1d_filepath]
-        #     arcpy.AddMessage(call)
-        #     process = subprocess.Popen(call, stdout = subprocess.PIPE,
-        #                                stderr = subprocess.PIPE, universal_newlines = True)
-        #
-        #     stdout, stderr = process.communicate()
-        #     arcpy.AddMessage(stdout)
-        #     arcpy.AddMessage(stderr)
-
-        if reaches_featureclass:
-            if "depth difference" in display_type.lower():
-                layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_links_depthdiff.lyr",
-                         reaches_featureclass.replace(".shp","")    , group=None, workspace_type="SHAPEFILE_WORKSPACE", new_name = os.path.basename(reaches_featureclass).replace(".shp",""))
-                layer.showLabels = False
-            else:
-                layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_links.lyr",
-                         reaches_featureclass.replace(".shp","")    , group=None, workspace_type="SHAPEFILE_WORKSPACE", new_name = os.path.basename(reaches_featureclass).replace(".shp",""))
-                layer.showLabels = False
-
         if nodes_featureclass:
             if "_spill.shp" in nodes_featureclass:
                 arcpy.AddMessage(nodes_featureclass)
 
                 layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_spill.lyr",
-                                 nodes_featureclass.replace(".shp", ""), group=None,
-                                 workspace_type="SHAPEFILE_WORKSPACE",
+                                 nodes_featureclass.replace(".shp", ""), group=empty_group_layer,
+                                 workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE",
                                  new_name=os.path.basename(nodes_featureclass).replace(".shp", ""))
                 layer.showLabels = True
             else:
                 # layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_nodes.lyr",
                 #          nodes_featureclass.replace(".shp",""), group=None, workspace_type = "SHAPEFILE_WORKSPACE", new_name = os.path.basename(nodes_featureclass).replace(".shp",""))
+
                 if "flood volume" in display_type.lower():
                     layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_nodes_floodvol.lyr",
-                                     nodes_featureclass.replace(".shp", ""), group=None,
-                                     workspace_type="SHAPEFILE_WORKSPACE",
+                                     nodes_featureclass.replace(".shp", ""), group=empty_group_layer,
+                                     workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE",
                                      new_name=os.path.basename(nodes_featureclass).replace(".shp", ""))
                     layer.showLabels = True
+
                 if "Flood Depth".lower() in display_type.lower():
                     layer = addLayer(
                         os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_nodes_depthdiff.lyr",
-                        nodes_featureclass.replace(".shp", ""), group=None,
-                        workspace_type="SHAPEFILE_WORKSPACE",
+                        nodes_featureclass.replace(".shp", ""), group=empty_group_layer,
+                        workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE",
                         new_name=os.path.basename(nodes_featureclass).replace(".shp", ""))
                     layer.showLabels = False
+
                 if "headloss" in display_type.lower():
                     layer = addLayer(
                         os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_nodes.lyr",
-                        nodes_featureclass.replace(".shp", ""), group=None,
-                        workspace_type="SHAPEFILE_WORKSPACE",
+                        nodes_featureclass.replace(".shp", ""), group=empty_group_layer,
+                        workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE",
                         new_name=os.path.basename(nodes_featureclass).replace(".shp", ""))
                     layer.showLabels = False
+
+        if reaches_featureclass:
+            if "depth difference" in display_type.lower():
+                layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_links_depthdiff.lyr",
+                                 reaches_featureclass.replace(".shp","")    , group=empty_group_layer, workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE", new_name = os.path.basename(reaches_featureclass).replace(".shp",""))
+                layer.showLabels = False
+            elif "peak discharge" in display_type.lower():
+                layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_links.lyr",
+                                 reaches_featureclass.replace(".shp","")    , group=empty_group_layer, workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE", new_name = os.path.basename(reaches_featureclass).replace(".shp",""))
+                layer.showLabels = False
         arcpy.RefreshTOC()
         # def addLayer(layer_source, source):
         #     layer = arcpy.mapping.Layer(layer_source)
