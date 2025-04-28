@@ -12,15 +12,16 @@ from scipy.optimize import bisect
 if len(sys.argv)>1:
     res1d_file = sys.argv[1]
 else:
-    extension = ""
+    # extension = "2"
     # MU_model = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Fredensvang\MIKE\FRE_005\FRE_005.sqlite"
     # res1d_file = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Fredensvang\MIKE\FRE_005\FRE_005_m1d - Result Files\FRE_005_CDS5_156_240_valideringBaseDefault_Network_HD.res1d"
-    # MU_model = r"\\files\Projects\RBU2025N002XX\RBU2025N00204\Til_KS\Nuuk_v3e.sqlite"
-    res1d_file = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Hasle Torv\MIKE_URBAN\HAT_058\HAT_058_m1d - Result Files\HAT_058_CDS_5_132BaseDefault_Network_HD.res1d"
+    # MU_model = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Hasle Torv\MIKE_URBAN\HAT_055\delete\HAT_055.sqlite"
+    res1d_file = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Hasle Torv\MIKE_URBAN\HAT_057\HAT_057_m1d - Result Files\HAT_057_CDS_5_132BaseDefault_Network_HD.res1d"
 
 if not 'MU_model' in locals(): # Guessing where MIKE+ database is. Write path of MIKE-model above if not correct
     model_folder = os.path.dirname(os.path.dirname(res1d_file))
     MU_model = os.path.join(model_folder, os.path.basename(model_folder)) + ".sqlite"
+    print(MU_model)
     if os.path.exists(MU_model):
         print("Assuming MIKE+ database is %s" % (MU_model))
     else:
@@ -35,9 +36,13 @@ ms_Catchment = os.path.join(MU_model, "ms_Catchment" if ".mdb" in MU_model else 
 msm_CatchCon = os.path.join(MU_model, "msm_CatchCon")
 
 filter_to_extent = None
-filter_to_extent = [571790, 6225063, 572819, 6226104] #HAT40
+if "hat" in res1d_file.lower():
+    filter_to_extent = [571290, 6224963, 572819, 6226104] #HAT40
 # filter_to_extent = [571721, 6219599, 573205, 6220639] #SON_215
-
+if "jjv" in res1d_file.lower():
+    filter_to_extent = [570066, 6218716, 571300, 6219756] # JJV
+if "son" in res1d_file.lower():
+    filter_to_extent = [571590, 6219471, 572939, 6220501]
 
 if filter_to_extent:
     print("Skipping all reaches and nodes outside extent %s" % filter_to_extent)
@@ -320,43 +325,65 @@ def read_res1d():
 
     extension = extension if 'extension' in locals() else ""
 
-    nodes_new_filename = getAvailableFilename(os.path.join(output_folder, os.path.basename(res1d_file).replace(".res1d","_nodes%s.shp" % extension)))
+    # nodes_new_filename = getAvailableFilename(os.path.join(output_folder, os.path.basename(res1d_file).replace(".res1d","_nodes%s.shp" % extension)))
+    #
+    # links_new_filename = getAvailableFilename(os.path.join(output_folder, os.path.basename(res1d_file).replace(".res1d","_links%s.shp" % extension)))
 
-    links_new_filename = getAvailableFilename(os.path.join(output_folder, os.path.basename(res1d_file).replace(".res1d","_links%s.shp" % extension)))
+    print("Creating Nodes and Reaches")
+    # output_folder = r"C:\path\to\output"  # Replace with your path
+    gdb_name = os.path.basename(res1d_file).replace(".res1d","_results%s" % extension) + ".gdb"
+    nodes_new_filename = "Nodes"
+    links_new_filename = "Reaches"
 
-    print("Creating Nodes")
+    gdb_path = os.path.join(output_folder, gdb_name)
+    nodes_output_filepath = os.path.join(gdb_path, nodes_new_filename)
+    links_output_filepath = os.path.join(gdb_path, links_new_filename)
+
     while True:
         try:
-            nodes_output_filepath = arcpy.CreateFeatureclass_management(output_folder, os.path.basename(nodes_new_filename), "POINT")[0]
+            if not arcpy.Exists(gdb_path):
+                arcpy.CreateFileGDB_management(output_folder, gdb_name)
+
+            fields = ["Diameter", "Ground_lev", "Invert_lev", "Max_elev", "Flood_dep", "Flood_vol", "max_hl",
+                      "max_I_V", "flow_area", "flow_diam", "end_depth", "Surcha", "SurchaBal", "MaxSurcha"]
+            if arcpy.Exists(nodes_output_filepath):
+                arcpy.DeleteFeatures_management(nodes_output_filepath)
+                existing_fields = [f.name for f in arcpy.ListFields(nodes_output_filepath)]
+                for field in fields:
+                    if field not in existing_fields:
+                        arcpy.management.AddField(nodes_output_filepath, field, "FLOAT")
+
+            else:
+                nodes_output_filepath = arcpy.CreateFeatureclass_management(gdb_path, nodes_new_filename, "POINT")[0]
+                arcpy.management.AddField(nodes_output_filepath, "MUID", "TEXT")
+                arcpy.management.AddField(nodes_output_filepath, "NetTypeNo", "SHORT")
+
+                # for field in ["Diameter", "Ground_lev", "Invert_lev", "Max_elev", "Flood_dep", "Flood_vol", "max_hl", "max_I_V", "flow_area", "flow_diam", "end_depth", "Surcha", "SurchaBal", "MaxSurcha"]:
+                # arcpy.management.AddField(nodes_output_filepath, field, "FLOAT", 8, 2)
+                arcpy.management.AddFields(nodes_output_filepath, [[field, "FLOAT"] for field in fields])
+
+            fields = ["Diameter", "MaxQ", "SumQ", "Up_MaxE", "Dw_MaxE", "EndQ", "MinQ", "MaxV", "FillDeg", "EnergyGr", "FrictionLo",
+                              "MaxTau", "Depthdiff"]
+            if arcpy.Exists(links_output_filepath):
+                arcpy.DeleteFeatures_management(links_output_filepath)
+
+                existing_fields = [f.name for f in arcpy.ListFields(links_output_filepath)]
+                for field in fields:
+                    if field not in existing_fields:
+                        arcpy.management.AddField(links_output_filepath, field, "FLOAT")
+
+            else:
+                links_output_filepath = arcpy.CreateFeatureclass_management(gdb_path, links_new_filename, "POLYLINE")[0]
+                arcpy.management.AddField(links_output_filepath, "MUID", "TEXT")
+                arcpy.management.AddField(links_output_filepath, "NetTypeNo", "SHORT")
+                arcpy.management.AddFields(links_output_filepath, [[field, "FLOAT"] for field in fields])
+
             break
         except arcpy.ExecuteError as e:
             if "ERROR 000464: Cannot get exclusive schema lock" in str(e):
-                input("The file %s is locked. Press enter to retry, after unlocking the file..." % (os.path.join(output_folder, os.path.basename(nodes_new_filename))))
+                input("The file %s is locked. Press enter to retry, after unlocking the file..." % fc_path)
             else:
                 raise
-
-    arcpy.management.AddField(nodes_output_filepath, "MUID", "TEXT")
-    arcpy.management.AddField(nodes_output_filepath, "NetTypeNo", "SHORT")
-    fields = ["Diameter", "Ground_lev", "Invert_lev", "Max_elev", "Flood_dep", "Flood_vol", "max_hl", "max_I_V", "flow_area", "flow_diam", "end_depth", "Surcha", "SurchaBal", "MaxSurcha"]
-    # for field in ["Diameter", "Ground_lev", "Invert_lev", "Max_elev", "Flood_dep", "Flood_vol", "max_hl", "max_I_V", "flow_area", "flow_diam", "end_depth", "Surcha", "SurchaBal", "MaxSurcha"]:
-        # arcpy.management.AddField(nodes_output_filepath, field, "FLOAT", 8, 2)
-    arcpy.management.AddFields(nodes_output_filepath, [[field, "FLOAT", 8, 2] for field in fields])
-
-    print("Creating Links")
-    while True:
-        try:
-            links_output_filepath = arcpy.CreateFeatureclass_management(output_folder, os.path.basename(links_new_filename), "POLYLINE")[0]
-            break
-        except arcpy.ExecuteError as e:
-            if "ERROR 000464: Cannot get exclusive schema lock" in str(e):
-                input("The file %s is locked. Press enter to retry, after unlocking the file..." % (
-                    os.path.join(output_folder, os.path.basename(nodes_new_filename))))
-            else:
-                raise
-    arcpy.management.AddField(links_output_filepath, "MUID", "TEXT")
-    arcpy.management.AddField(links_output_filepath, "NetTypeNo", "SHORT")
-    for field in ["Diameter", "MaxQ", "SumQ", "EndQ", "MinQ", "MaxV", "FillDeg", "EnergyGr", "FrictionLo", "MaxTau", "Depthdiff"]:
-        arcpy.management.AddField(links_output_filepath, field, "FLOAT", 10, 6)
 
     def bretting(y, max_discharge, full_discharge, di):
         q_div_qf = 0.46 - 0.5 * math.cos(np.pi * y / di) + 0.04 * math.cos(2 * np.pi * y / di)
@@ -366,7 +393,7 @@ def read_res1d():
     timeseries = [time.timestamp() for time in df.time_index]
     print("Reading and writing Reach Results")
     with alive_bar(len(reaches), force_tty=True) as bar:
-        with arcpy.da.InsertCursor(links_output_filepath, ["SHAPE@", "MUID", "Diameter", "MaxQ", "SumQ", "NetTypeNo", "EndQ", "MinQ", "MaxV", "EnergyGr", "FrictionLo", "FillDeg", "MaxTau", "Depthdiff"]) as cursor:
+        with arcpy.da.InsertCursor(links_output_filepath, ["SHAPE@", "MUID", "Diameter", "MaxQ", "SumQ", "NetTypeNo", "EndQ", "MinQ", "MaxV", "EnergyGr", "FrictionLo", "FillDeg", "MaxTau", "Depthdiff", "Up_MaxE", "Dw_MaxE"]) as cursor:
             for muid in set(reaches.keys()):
                 reach = reaches[muid]
                 if not reach.skip:
@@ -435,7 +462,7 @@ def read_res1d():
                     cursor.insertRow([reach.shape, muid, reach.diameter or 0, reach.max_discharge or 0, reach.sum_discharge or 0,
                                   reach.net_type_no or 0, reach.end_discharge or 0,
                                       reach.min_discharge or 0, reach.max_flow_velocity or 0,
-                                      energy_line_gradient, friction_loss, reach.fill_degree or 0, reach.tau or 0, reach.depth_difference or 0])
+                                      energy_line_gradient, friction_loss, reach.fill_degree or 0, reach.tau or 0, reach.depth_difference or 0, reach.max_start_water_level or 0, reach.max_end_water_level or 0])
                 bar()
     res1d_quantities = res1d.quantities
 
@@ -519,8 +546,7 @@ def read_res1d():
                             print(muid)
                             print(traceback.format_exc())
                             print(e)
-                    if muid == "Hasle_torv_bassin":
-                        print("BOB")
+
                     cursor.insertRow([arcpy.Point(query_node.XCoordinate, query_node.YCoordinate), muid, node.diameter or 0,
                                       node.invert_level, node.max_level, node.flood_depth, node.flood_volume or 0,
                                       node.net_type_no or 0, node.max_headloss or 0,
@@ -544,7 +570,7 @@ def read_res1d():
 
     from datetime import datetime
     now = datetime.now()
-    print("Code run at %s - simulation run at %s" % (now.strftime("%H:%M:%S"), datetime.fromtimestamp(os.path.getmtime(res1d_file)).strftime("%H:%M:%S")))
+    print("Code run at %s - simulation run at %s" % (now.strftime("%H:%M"), datetime.fromtimestamp(os.path.getmtime(res1d_file)).strftime("%H:%M")))
 
 # import cProfile
 # import pstats
