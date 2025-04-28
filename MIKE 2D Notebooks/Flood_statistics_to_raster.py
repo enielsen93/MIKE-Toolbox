@@ -10,7 +10,7 @@ import os
 import numpy as np
 
 tic = time.time()
-DFSUFile = r"C:\Users\ELNN\OneDrive - Ramboll\Documents\Aarhus Vand\Vesterbro Torv\MIKE_URBAN\05_RESULTS\03_FLOOD\Status\2023-06-10\VBT_219_mGA_CDS_20_138_FMBaseDefault_2D_Flood_statistics.dfsu"
+DFSUFile = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Hasle Torv\MIKE_URBAN\HAT_062\HAT_062_m21fm - Result Files\HAT_062_CDS_5_132_overlandBaseDefault_2D_Flood_statistics.dfsu"
 DFSUField = "Maximum water depth"
 RasterFileOutput = DFSUFile.replace(".dfsu",".tif")
 clip_layers = None
@@ -46,7 +46,7 @@ statusUpdate("Reading DFSU file", tic)
 dfs = mikeio.dfsu.Dfsu2DH(DFSUFile)
 
 statusUpdate("Retrieving element coordinates from DFSU file", tic)
-element_coordinates = dfs.element_coordinates
+element_coordinates = dfs.geometry.element_coordinates
 
 print("Reading DFSU File")
 dfs_read = dfs.read(items=[i for i, a in enumerate(dfs.items) if DFSUField == a.name])
@@ -54,13 +54,13 @@ dfs_read_data = dfs_read.to_numpy()
 np.nan_to_num(dfs_read_data, copy=False)
 
 arcpy.CreateFeatureclass_management("in_memory", "ClipPolygon", "POLYGON")
-boundary_xy_table = dfs.boundary_polylines[1][0].xy
+boundary_xy_table = dfs.geometry.boundary_polylines[1][0].xy
 polygons = arcpy.Polygon(arcpy.Array([arcpy.Point(xy[0], xy[1]) for xy in boundary_xy_table]))
 with arcpy.da.InsertCursor("in_memory\ClipPolygon", "SHAPE@") as cursor:
     cursor.insertRow([polygons])
 
 arcpy.CreateFeatureclass_management("in_memory", "CutPolygon", "POLYGON")
-cut_polygons = dfs.boundary_polylines[3]
+cut_polygons = dfs.geometry.boundary_polylines[3]
 polygons = []
 for cut_polygon in cut_polygons:
     boundary_xy_table = cut_polygon.xy
