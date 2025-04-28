@@ -977,10 +977,10 @@ class ExportToDDS(object):
             basefolder = os.path.dirname(mike_urban_database
                                          )
         if msm_Node and not parameters[2].value:
-            parameters[2].value = os.path.join(basefolder, os.path.basename(mike_urban_database).replace(".mdb","_knuder.xml"))
+            parameters[2].value = os.path.join(basefolder, os.path.basename(mike_urban_database).replace(".mdb","_knuder.xml").replace(".sqlite","_knuder.xml"))
 
         if msm_Link and not parameters[3].value:
-            parameters[3].value = os.path.join(basefolder, os.path.basename(mike_urban_database).replace(".mdb","_ledninger.xml"))
+            parameters[3].value = os.path.join(basefolder, os.path.basename(mike_urban_database).replace(".mdb","_ledninger.xml").replace(".sqlite","_ledninger.xml"))
 
 
         # if not parameters[0].value and not parameters[1].value:
