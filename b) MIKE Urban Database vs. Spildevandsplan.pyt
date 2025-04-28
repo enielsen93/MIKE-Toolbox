@@ -227,11 +227,11 @@ class GetImperviousnessSPV(object):
 
         layer_add = arcpy.mapping.Layer(ms_Catchment)
         if MU_database != "not_available":
-            arcpy.mapping.AddLayer(df, addLayer,"TOP")
-            updatelayer = arcpy.mapping.ListLayers(mxd, addLayer, df)[0]
+            arcpy.mapping.AddLayer(df, layer_add,"TOP")
+            updatelayer = arcpy.mapping.ListLayers(mxd, layer_add, df)[0]
             sourcelayer = arcpy.mapping.Layer(os.path.dirname(os.path.realpath(__file__)) + "\Data\ms_Catchment_Symbology.lyr")
             arcpy.mapping.UpdateLayer(df,updatelayer,sourcelayer,False)
-            updatelayer.replaceDataSource(unicode(addLayer.workspacePath), 'FILEGDB_WORKSPACE', unicode(addLayer.datasetName))
+            updatelayer.replaceDataSource(unicode(layer_add.workspacePath), 'FILEGDB_WORKSPACE', unicode(layer_add.datasetName))
 
         try:
             IntersectFeature = arcpy.Intersect_analysis(in_features=[[layer_add, 2],[SPV_feature, 1]], out_feature_class="GetImperviousnessIntersect", join_attributes="ONLY_FID", cluster_tolerance="-1 Unknown", output_type="INPUT")
@@ -240,7 +240,7 @@ class GetImperviousnessSPV(object):
                 arcpy.AddWarning("Error upon running intersect analysis - attempting a repair on catchment and spildevandsplan layer")
                 arcpy.RepairGeometry_management(SPV_feature)
                 arcpy.RepairGeometry_management(layer_add)
-                IntersectFeature = arcpy.Intersect_analysis(in_features=[[addLayer, 2],[SPV_feature, 1]], out_feature_class="GetImperviousnessIntersect", join_attributes="ONLY_FID", cluster_tolerance="-1 Unknown", output_type="INPUT")
+                IntersectFeature = arcpy.Intersect_analysis(in_features=[[layer_add, 2],[SPV_feature, 1]], out_feature_class="GetImperviousnessIntersect", join_attributes="ONLY_FID", cluster_tolerance="-1 Unknown", output_type="INPUT")
             except Exception as e:
                 arcpy.AddError("Exporting layers to Scratch Database")
                 arcpy.CopyFeatures_management(layer_add, arcpy.env.scratchGDB + r"\addlayerDebug")
@@ -323,6 +323,7 @@ class GetImperviousnessSPV(object):
                 for i in [1,2,3]:
                     if row[i]==None:
                         arcpy.AddError("%s is type None in catchment features" % catchmentFields[i])
+            # if "A column was specified that does not exist" in str(e):
 
             arcpy.AddMessage([f.name for f in arcpy.ListFields(ms_Catchment)])
             arcpy.AddMessage(ms_Catchment)
@@ -461,8 +462,12 @@ class AnalyzeSPV(object):
         oplande_SPV = {}
         with arcpy.da.SearchCursor(SPV_feature, [OPL_name, "SHAPE@AREA", imp_field]) as cursor:
             for row in cursor:
+                try:
+                    oplande_SPV[row[0]] = Opland(row[1]/1e4, (float(row[2].replace(",",".")) if isinstance(row[2], (str,unicode)) else row[2])*row[1]/1e4, 0)
+                except Exception as e:
+                    arcpy.AddError(row)
+                    raise(e)
 
-                oplande_SPV[row[0]] = Opland(row[1]/1e4, (float(row[2].replace(",",".")) if type(row[2]) is str else row[2])*row[1]/1e4, 0)
         oplande_SPV["None"] = Opland(0,0,0)
         
         if getBookmarkConnections:
@@ -482,8 +487,8 @@ class AnalyzeSPV(object):
             ws.write(0,0,"Oplandsnavn",xlwt.easyxf('font: bold on, color white; pattern: pattern solid, fore_colour header; '))
             ws.write(1,0,"",xlwt.easyxf('font: bold on, color white; pattern: pattern solid, fore_colour header'))
             ws.write_merge(0,0,1,2,u"Total areal [ha]",xlwt.easyxf('align: horiz center; font: bold on, color white; pattern: pattern solid, fore_colour header'))
-            ws.write_merge(0,0,3,4,u"Bef�stet areal [ha]",xlwt.easyxf('align: horiz center; font: bold on, color white; pattern: pattern solid, fore_colour header'))
-            ws.write_merge(0,0,5,6,u"Afl�bskoefficient [%]",xlwt.easyxf('align: horiz center; font: bold on, color white; pattern: pattern solid, fore_colour header'))
+            ws.write_merge(0,0,3,4,u"Befæstet areal [ha]",xlwt.easyxf('align: horiz center; font: bold on, color white; pattern: pattern solid, fore_colour header'))
+            ws.write_merge(0,0,5,6,u"Afløbskoefficient [%]",xlwt.easyxf('align: horiz center; font: bold on, color white; pattern: pattern solid, fore_colour header'))
             ws.write_merge(0,0,7,8,u"PE",xlwt.easyxf('align: horiz center; font: bold on, color white; pattern: pattern solid, fore_colour header'))
             ws.write(0,10,"Hyperlink til kort",xlwt.easyxf('font: bold on'))
             row1Style = "align: horiz right; font: color white; pattern: pattern solid, fore_colour header; border: bottom thick"
