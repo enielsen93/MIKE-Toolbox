@@ -117,7 +117,15 @@ class DisplayMikeUrban(object):
             parameterType="optional",
             direction="Output")
 
-        parameters = [MU_database, join_catchments, features_to_display, show_loss_par, show_depth, sql_query]
+        save_layer = arcpy.Parameter(
+            displayName="Save it to layer",
+            name="save_layer",
+            datatype="Boolean",
+            category="Additional Settings",
+            parameterType="optional",
+            direction="Output")
+
+        parameters = [MU_database, join_catchments, features_to_display, show_loss_par, show_depth, sql_query, save_layer]
 
         return parameters
 
@@ -141,6 +149,7 @@ class DisplayMikeUrban(object):
         show_loss_par = parameters[3].Value
         show_depth = parameters[4].Value
         sql_query = parameters[5].Value
+        save_layer = parameters[6].Value
 
         msm_Node = MU_database + "\msm_Node"
         msm_Link = MU_database + "\mu_Geometry\msm_Link"
@@ -1124,6 +1133,9 @@ class DisplayMikeUrban(object):
                     arcpy.AddWarning(e)
             arcpy.env.workspace = old_workspace
 
+        if save_layer:
+            layout_layer_path = MU_database.replace(".mdb", ".lyr")
+            arcpy.management.SaveToLayerFile(empty_group_layer, layout_layer_path)
         return
 
 
