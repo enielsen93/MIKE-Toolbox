@@ -54,7 +54,7 @@ class Toolbox(object):
         self.alias  = "Display MIKE+"
 
         # List of tool classes associated with this toolbox
-        self.tools = [DisplaySqliteStep1, DisplaySqliteStep2] #DimensionAnalysis, DisplayPipeElevation
+        self.tools = [DisplaySqliteStep1, DisplaySqliteStep2, CopyMuppTemplate] #DimensionAnalysis, DisplayPipeElevation
 
 class DisplaySqliteStep1(object):
     def __init__(self):
@@ -1077,7 +1077,15 @@ class DisplaySqliteStep2(object):
             direction="Output")
         show_depth.value = True
 
-        parameters = [group_layer, show_loss_par, show_depth]
+        save_layer = arcpy.Parameter(
+            displayName="Save it to layer",
+            name="save_layer",
+            datatype="Boolean",
+            category="Additional Settings",
+            parameterType="optional",
+            direction="Output")
+
+        parameters = [group_layer, show_loss_par, show_depth, save_layer]
 
         return parameters
 
@@ -1105,6 +1113,7 @@ class DisplaySqliteStep2(object):
         group_layer = parameters[0].ValueAsText
         show_loss_par = parameters[1].Value
         show_depth = parameters[2].Value
+        save_layer = parameters[3].Value
 
         mxd = arcpyMapDocument("CURRENT")
         df = mxd.listMaps()[0] if arcgis_pro else arcpymapping.ListDataFrames(mxd)[0]
@@ -1124,6 +1133,7 @@ class DisplaySqliteStep2(object):
             layer.name = layer_template_lyr.name
             layer.showLabels = True
 
+        layout_layer_path = None
         for layer in layers:
             # arcpy.AddMessage(((group_layer + r"\\.", layer.name)))
             if re.match(group_layer + r"\\.", layer.longName):
@@ -1159,5 +1169,71 @@ class DisplaySqliteStep2(object):
                     layer_template = os.path.join(templates_folder, "msm_Catchment.lyr")
                     apply_layer_settings(layer, layer_template)
 
-            # arcpy.RefreshTOC()
+                if not layout_layer_path and "sqlite" in layer.dataSource:
+                    layout_layer_path = os.path.dirname(layer.dataSource.replace(".sqlite", ".lyr"))
 
+            # arcpy.RefreshTOC()
+        # for layer in layers:
+        #     arcpy.AddMessage(dir(layer))
+        #     try:
+                # if "sqlite" in layer.dataSource:
+                    # layout_layer_path = layer.dataSource.replace(".sqlite", ".lyr")
+        if save_layer:
+            arcpy.management.SaveToLayerFile(group_layer, layout_layer_path)
+            # except Exception as e:
+            #     arcpy.AddWarning(e)
+
+class CopyMuppTemplate(object):
+    def __init__(self):
+        self.label = "a) Copy mupp Template"
+        self.description = ("a) Copy mupp Template")
+        self.canRunInBackground = True
+
+    def getParameterInfo(self):
+        # Define parameter definitions
+
+        # Input Features parameter
+        sqlite_database = arcpy.Parameter(
+            displayName="Sqlite database",
+            name="database",
+            datatype="DEFile",
+            parameterType="Required",
+            direction="Input")
+        sqlite_database.filter.list = ["sqlite"]
+
+        parameters = [sqlite_database]
+
+        return parameters
+
+    def isLicensed(self):  # optional
+        return True
+
+    def updateParameters(self, parameters):  # optional
+        # MU_database = parameters[0].ValueAsText
+        return
+
+    def updateMessages(self, parameters):  # optional
+        if parameters[0].ValueAsText and '"' in parameters[0].ValueAsText:
+            parameters[0].Value = parameters[0].ValueAsText.replace('"','')
+        return
+
+    def execute(self, parameters, messages):
+        MU_database = parameters[0].ValueAsText
+
+        mupp_template_filepath = os.path.dirname(os.path.realpath(__file__)) + r"\Data\Templates\MIKE Plus\Template.mupp"
+
+        if ".sqlite" in MU_database:
+            shutil.copy(mupp_template_filepath, MU_database.replace(".sqlite",".mupp"))
+        else:
+            raise Exception("Could not find .sqlite in MU_database")
+
+        with open(MU_database.replace(".sqlite",".mupp"),'r') as f:
+            txt_lines = f.readlines()
+
+        for lineno in range(len(txt_lines[:30])):
+        # Replace DBName and DBFilePath
+            txt_lines[lineno] = re.sub(r"DBName\s*=\s*'.*?'", r"DBName = '%s'" % (os.path.basename(MU_database)), txt_lines[lineno])
+            txt_lines[lineno] = re.sub(r"DBFilePath\s*=\s*\|.*?\|", r"DBFilePath = |%s|" % (os.path.basename(MU_database)), txt_lines[lineno])
+
+        with open(MU_database.replace(".sqlite", ".mupp"), 'w') as f:
+            f.writelines(txt_lines)
