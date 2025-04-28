@@ -122,6 +122,7 @@ class Dandas2MULinks(object):
             datatype="GPDouble",
             parameterType="Optional",
             direction="Input")
+        ignore_elevation_difference.value = 0.15
 		
         params = [dandas_knuder, dandas_ledninger, afloebkodeparameter, afloebkategori, coordinate_system, only_import_extent, import_catchments, ignore_elevation_difference]
         return params
@@ -901,7 +902,7 @@ class CopyMikeUrbanFeatures(object):
         msm_Nodes = parameters[1].values
         msm_Links = parameters[2].values
         ms_Catchments = parameters[3].values
-        arcpy.AddMessage((msm_Links, ".sqlite" in arcpy.Describe(msm_Links[0]).catalogPath))
+        # arcpy.AddMessage((msm_Links, ".sqlite" in arcpy.Describe(msm_Links[0]).catalogPath))
         if (msm_Nodes and ".sqlite" in arcpy.Describe(msm_Nodes[0]).catalogPath) or (msm_Links and ".sqlite" in arcpy.Describe(msm_Links[0]).catalogPath) or (ms_Catchments and ".sqlite" in arcpy.Describe(ms_Catchments[0]).catalogPath):
             source_type = 'MUPlusDB'
         else:
@@ -939,6 +940,14 @@ class CopyMikeUrbanFeatures(object):
             arcpy.AddMessage("SQLITE database. Using XML file in MIKE+ for import.")
             with open(os.path.dirname(os.path.realpath(__file__)) + r"\Data\XML\DDS_to_MIKE+.xml", 'r') as f:
                 xml_txt = f.readlines()
+
+        if not msm_Nodes:
+            enabled_lineno = [i for i, line in enumerate(xml_txt) if 'property="msm_Node" value=' in line][0]
+            xml_txt[enabled_lineno] = re.sub('value *= *"[^"]+"', 'value="False"', xml_txt[enabled_lineno])
+
+        if not msm_Links:
+            enabled_lineno = [i for i, line in enumerate(xml_txt) if 'property="msm_Link" value=' in line][0]
+            xml_txt[enabled_lineno] = re.sub('value *= *"[^"]+"', 'value="False"', xml_txt[enabled_lineno])
 
         if pythonaddins.MessageBox("You are copying %d manholes, %d pipes, and %d catchments. Continue?" % (nodes_count, link_count, catchment_count),
                                    "Confirm copy?", 1) == "OK":
