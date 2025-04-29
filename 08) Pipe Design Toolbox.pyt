@@ -113,6 +113,7 @@ class PipeDimensionToolTAPro(object):
             datatype="GPFeatureLayer",
             parameterType="Required",
             direction="Input")
+        pipe_layer.filter.list = ["Polyline"]
 
         reaches = arcpy.Parameter(
             displayName="Trace network through:",
@@ -130,6 +131,7 @@ class PipeDimensionToolTAPro(object):
 			datatype="GPString",
 			parameterType="Optional",
 			direction="Input")
+        # result_field.value = "Diameter"
 
         breakChainOnNodes = arcpy.Parameter(
             displayName="End each trace at following node MUIDs (each node should by delimited by a comma: node1, node2)",
@@ -240,6 +242,9 @@ class PipeDimensionToolTAPro(object):
 
         if links and not pipe_layer:
             parameters[0].value = links
+
+        if pipe_layer and not parameters[2].Value:
+            parameters[2].Value = "Diameter" if "diameter" in [f.name.lower() for f in arcpy.ListFields(pipe_layer)] else parameters[2].Value
 
         if pipe_layer and not runoff_file:
             MU_database = os.path.dirname(arcpy.Describe(pipe_layer).catalogPath).replace("\mu_Geometry", "")
