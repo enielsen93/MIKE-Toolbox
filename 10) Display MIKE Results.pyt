@@ -1407,7 +1407,7 @@ class DisplayMIKE1DResults(object):
             parameterType="Optional",
             multiValue=True,
             direction="Input")
-        display_type.filter.list = ["Flood volume", "Flood Depth", "Max Elevation / Headloss", "Peak Discharge", "Link Depth Difference"]
+        display_type.filter.list = ["Flood volume", "Flood Depth", "Max Elevation / Headloss", "Peak Discharge", "Link Depth Difference", "Total Discharge"]
         display_type.value = ["Flood Volume", "Peak Discharge"]
 
         # res1d_filepath  = arcpy.Parameter(
@@ -1625,10 +1625,16 @@ class DisplayMIKE1DResults(object):
                 layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_links_depthdiff.lyr",
                                  reaches_featureclass.replace(".shp","")    , group=empty_group_layer, workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE", new_name = os.path.basename(reaches_featureclass).replace(".shp",""))
                 layer.showLabels = False
-            elif "peak discharge" in display_type.lower():
+            if "peak discharge" in display_type.lower():
                 layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_links.lyr",
                                  reaches_featureclass.replace(".shp","")    , group=empty_group_layer, workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE", new_name = os.path.basename(reaches_featureclass).replace(".shp",""))
                 layer.showLabels = False
+            if "total discharge" in display_type.lower():
+                layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_links_SumQ.lyr",
+                                 reaches_featureclass.replace(".shp", ""), group=empty_group_layer,
+                                 workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE",
+                                 new_name=os.path.basename(reaches_featureclass).replace(".shp", ""))
+                layer.showLabels = True
         arcpy.RefreshTOC()
         # def addLayer(layer_source, source):
         #     layer = arcpy.mapping.Layer(layer_source)
