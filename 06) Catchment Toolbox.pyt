@@ -1920,7 +1920,7 @@ class CatchmentSlopeAnalysis(object):
             displayName="Field from Result Layer to use:",
             name="result_layer_field",
             datatype="GPString",
-            parameterType="Required",
+            parameterType="Optional",
             category="Get Elevation from Result Layer",
             direction="Input")
         # msm_Link_field.filter.list = ["InvertLevel", "GroundLevel", "CriticalLevel"]
