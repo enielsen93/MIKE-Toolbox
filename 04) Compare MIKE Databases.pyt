@@ -3,7 +3,14 @@ import os
 import re
 import numpy as np
 from arcpy._mapping import Layer
-
+if "mapping" in dir(arcpy):
+    arcgis_pro = False
+    import arcpy.mapping as arcpymapping
+    from arcpy.mapping import MapDocument as arcpyMapDocument
+else:
+    arcgis_pro = True
+    import arcpy.mp as arcpymapping
+    from arcpy.mp import ArcGISProject as arcpyMapDocument
 
 def getAvailableFilename(filepath, parent=None):
     parent = "F%s" % (parent) if parent and parent[0].isdigit() else None
@@ -311,17 +318,24 @@ class CompareMikeModels(object):
                         row = (features_1[MUID][MUID_field_i], ", ".join(MUIDs_field_changed[MUID]))
                         cursor.insertRow(row)
 
-            arcpy.AddMessage(result_layer)
             if arcpy.Describe(feature_path_1).dataType == "FeatureClass":
                 newlayer = arcpy.mapping.Layer(result_layer)
+                for label_class in (newlayer.listLabelClasses() if arcgis_pro else newlayer.labelClasses):
+                        label_class.expression = "[fields]"
+                newlayer.showLabels = True
                 newlayer.name = newlayer.name + " (%d features)" % (np.sum(
                     [1 for row in arcpy.da.SearchCursor(result_layer, ["MUID"])]))
                 update_layer = arcpy.mapping.AddLayerToGroup(df, empty_group_layer, newlayer, "TOP")
             else:
                 newlayer = arcpy.mapping.TableView(result_layer)
+                for label_class in (newlayer.listLabelClasses() if arcgis_pro else newlayer.labelClasses):
+                        label_class.expression = "[fields]"
+                newlayer.showLabels = True
                 newlayer.name = newlayer.name + " (%d features)" % (np.sum(
                     [1 for row in arcpy.da.SearchCursor(result_layer, ["MUID"])]))
                 update_layer = arcpy.mapping.AddTableView(df, newlayer)
+                for label_class in (update_layer.listLabelClasses() if arcgis_pro else update_layer.labelClasses):
+                        label_class.expression = "[fields]"
 
         return
 
