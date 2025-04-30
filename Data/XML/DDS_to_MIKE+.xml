@@ -1033,7 +1033,7 @@
                 </item>
               </TableNodeProperties>
             </TablePropertyValue>
-            <TablePropertyValue xsi:type="TablePropertyValueForUISerialization" property="FromNode" value="FromNodeID" tableNodeType="AssignmentItem">
+            <TablePropertyValue xsi:type="TablePropertyValueForUISerialization" property="FromNodeID" value="FROMNODE" tableNodeType="AssignmentItem">
               <ChildAssginItems />
               <TableNodeProperties>
                 <item>
@@ -1440,7 +1440,7 @@
                 </item>
               </TableNodeProperties>
             </TablePropertyValue>
-            <TablePropertyValue xsi:type="TablePropertyValueForUISerialization" property="ToNode" value="ToNodeID" tableNodeType="AssignmentItem">
+            <TablePropertyValue xsi:type="TablePropertyValueForUISerialization" property="ToNodeID" value="TONODE" tableNodeType="AssignmentItem">
               <ChildAssginItems />
               <TableNodeProperties>
                 <item>
