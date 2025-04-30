@@ -1042,13 +1042,14 @@ class CopyMikeUrbanFeatures(object):
                         fields = [field.name.upper() for field in arcpy.ListFields(selected)]
 
                         if "FROMNODEID" in fields:
+                            arcpy.AddMessage("BOB")
                             FROMNODEID_where_clause_lineno = \
                                 [i for i, line in enumerate(xml_txt) if 'property="FromNode' in line][0]
-                            xml_txt[FROMNODEID_where_clause_lineno] = xml_txt[FROMNODEID_where_clause_lineno].replace('property="FromNode"','property="FromNodeID"')
+                            xml_txt[FROMNODEID_where_clause_lineno] = xml_txt[FROMNODEID_where_clause_lineno].replace('value="FROMNODE"','value="FromNodeID"')
 
                             TONODEID_where_clause_lineno = \
                                 [i for i, line in enumerate(xml_txt) if 'property="ToNode' in line][0]
-                            xml_txt[TONODEID_where_clause_lineno] = xml_txt[TONODEID_where_clause_lineno].replace('property="ToNode"','property="ToNodeID"')
+                            xml_txt[TONODEID_where_clause_lineno] = xml_txt[TONODEID_where_clause_lineno].replace('value="TONODE"','value="ToNodeID"')
 
                         try:
                             source_type_lineno = [i for i, line in enumerate(xml_txt) if 'sourceTypeParameter' in line][0]
