@@ -242,7 +242,8 @@ class CompareMikeModels(object):
             arcpy.SetProgressor("step","Comparing rows for feature %s" % (feature), 0, len(MUIDs_to_check), 1)
             MUIDs_field_changed = {}
             for step, MUID in enumerate(MUIDs_to_check):
-                arcpy.SetProgressorPosition(step)
+                if step % 10 == 0:
+                    arcpy.SetProgressorPosition(step)
                 idx = compare_rows(features_1[MUID], features_2[MUID], fields = fields)
                 if idx:
                     MUIDs_field_changed[MUID] = [fields[i] for i in idx]
@@ -328,14 +329,9 @@ class CompareMikeModels(object):
                 update_layer = arcpy.mapping.AddLayerToGroup(df, empty_group_layer, newlayer, "TOP")
             else:
                 newlayer = arcpy.mapping.TableView(result_layer)
-                for label_class in (newlayer.listLabelClasses() if arcgis_pro else newlayer.labelClasses):
-                        label_class.expression = "[fields]"
-                newlayer.showLabels = True
                 newlayer.name = newlayer.name + " (%d features)" % (np.sum(
                     [1 for row in arcpy.da.SearchCursor(result_layer, ["MUID"])]))
                 update_layer = arcpy.mapping.AddTableView(df, newlayer)
-                for label_class in (update_layer.listLabelClasses() if arcgis_pro else update_layer.labelClasses):
-                        label_class.expression = "[fields]"
 
         return
 
