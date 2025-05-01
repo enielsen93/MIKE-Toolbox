@@ -2143,6 +2143,7 @@ class ResetUpLevelDwlevel(object):
             if len(links_OID) == 0:
                 links_OID = [row[0] for row in arcpy.da.SearchCursor(arcpy.Describe(pipe_layer).catalogPath, ["OID@"])]
             OID_fieldname = arcpy.Describe(pipe_layer).OIDFieldName
+            where_clause = "%s IN (%s)" % (OID_fieldname, ", ".join([str(OID) for OID in links_OID]))
         else:
             links_OID = [row[0] for row in arcpy.da.SearchCursor(pipe_layer, ["MUID"])]
             if len(links_OID) == 0:
