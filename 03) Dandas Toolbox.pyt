@@ -941,13 +941,13 @@ class CopyMikeUrbanFeatures(object):
             with open(os.path.dirname(os.path.realpath(__file__)) + r"\Data\XML\DDS_to_MIKE+.xml", 'r') as f:
                 xml_txt = f.readlines()
 
-        if not msm_Nodes:
-            enabled_lineno = [i for i, line in enumerate(xml_txt) if 'property="msm_Node" value=' in line][0]
-            xml_txt[enabled_lineno] = re.sub('value *= *"[^"]+"', 'value="False"', xml_txt[enabled_lineno])
+            if not msm_Nodes:
+                enabled_lineno = [i for i, line in enumerate(xml_txt) if 'property="msm_Node" value=' in line][0]
+                xml_txt[enabled_lineno] = re.sub('value *= *"[^"]+"', 'value="False"', xml_txt[enabled_lineno])
 
-        if not msm_Links:
-            enabled_lineno = [i for i, line in enumerate(xml_txt) if 'property="msm_Link" value=' in line][0]
-            xml_txt[enabled_lineno] = re.sub('value *= *"[^"]+"', 'value="False"', xml_txt[enabled_lineno])
+            if not msm_Links:
+                enabled_lineno = [i for i, line in enumerate(xml_txt) if 'property="msm_Link" value=' in line][0]
+                xml_txt[enabled_lineno] = re.sub('value *= *"[^"]+"', 'value="False"', xml_txt[enabled_lineno])
 
         if pythonaddins.MessageBox("You are copying %d manholes, %d pipes, and %d catchments. Continue?" % (nodes_count, link_count, catchment_count),
                                    "Confirm copy?", 1) == "OK":
