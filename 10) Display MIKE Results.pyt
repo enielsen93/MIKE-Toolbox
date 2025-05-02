@@ -1561,9 +1561,9 @@ class DisplayMIKE1DResults(object):
                 layer = arcpymapping.LayerFile(layer_source) if arcgis_pro else arcpymapping.Layer(layer_source)
                 if group:
                     if arcgis_pro:
-                        df.addLayerToGroup(group, layer, "BOTTOM")
+                        df.addLayerToGroup(group, layer, "TOP")
                     else:
-                        arcpymapping.AddLayerToGroup(df, group, layer, "BOTTOM")
+                        arcpymapping.AddLayerToGroup(df, group, layer, "TOP")
                 else:
                     if arcgis_pro:
                         df.addLayer(layer, "TOP")
@@ -1605,6 +1605,7 @@ class DisplayMIKE1DResults(object):
                     layer.showLabels = True
 
                 if "Flood Depth".lower() in display_type.lower():
+                    arcpy.AddMessage(nodes_featureclass)
                     layer = addLayer(
                         os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_nodes_depthdiff.lyr",
                         nodes_featureclass.replace(".shp", ""), group=empty_group_layer,
@@ -1623,11 +1624,13 @@ class DisplayMIKE1DResults(object):
         if reaches_featureclass:
             if "depth difference" in display_type.lower():
                 layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_links_depthdiff.lyr",
-                                 reaches_featureclass.replace(".shp","")    , group=empty_group_layer, workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE", new_name = os.path.basename(reaches_featureclass).replace(".shp",""))
+                                 reaches_featureclass.replace(".shp",""), group=empty_group_layer, workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE", new_name = os.path.basename(reaches_featureclass).replace(".shp",""))
                 layer.showLabels = False
             if "peak discharge" in display_type.lower():
                 layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_links.lyr",
-                                 reaches_featureclass.replace(".shp","")    , group=empty_group_layer, workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE", new_name = os.path.basename(reaches_featureclass).replace(".shp",""))
+                                 reaches_featureclass.replace(".shp",""), group=empty_group_layer,
+                                 workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE",
+                                 new_name = os.path.basename(reaches_featureclass).replace(".shp",""))
                 layer.showLabels = False
             if "total discharge" in display_type.lower():
                 layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_links_SumQ.lyr",
