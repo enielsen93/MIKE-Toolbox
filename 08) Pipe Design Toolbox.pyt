@@ -346,7 +346,6 @@ class PipeDimensionToolTAPro(object):
         rainseries.additional_discharge = graph.maxInflow
         rainseries.scaling_factor = scaling_factor
 
-        arcpy.AddMessage(selected_pipes)
         target_manholes = [graph.network.links[link].fromnode for link in selected_pipes]
         arcpy.SetProgressor("step", "Tracing to every pipe selected", 0, len(target_manholes), 1)
 
