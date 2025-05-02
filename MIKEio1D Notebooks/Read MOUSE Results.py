@@ -16,8 +16,8 @@ else:
     extension = ""
     # MU_model = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Fredensvang\MIKE\FRE_005\FRE_005.sqlite"
     # res1d_file = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Fredensvang\MIKE\FRE_005\FRE_005_m1d - Result Files\FRE_005_CDS5_156_240_valideringBaseDefault_Network_HD.res1d"
-    MU_model = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Gjellerup\Mike Urban\_ORIGINAL\Gjellerup_X06_1_V1_P2_u.soenderbakken_Rbassin.mdb"
-    res1d_file = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Gjellerup\Mike Urban\_ORIGINAL\NW_CDS5_1,5_240_X06-1_P2_u.sdr_RbassinBase.PRF"
+    MU_model = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Gjellerup\Mike Urban\GJE_003\GJE_003.mdb"
+    res1d_file = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Gjellerup\Mike Urban\GJE_003\GJE_003_CDS_5_150Base.PRF"
 
 if not 'MU_model' in locals(): # Guessing where MIKE+ database is. Write path of MIKE-model above if not correct
     model_folder = os.path.dirname(os.path.dirname(res1d_file))

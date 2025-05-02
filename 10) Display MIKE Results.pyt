@@ -1506,7 +1506,7 @@ class DisplayMIKE1DResults(object):
                                                                                                "TOP")
         empty_group_layer = df.listLayers('Empty Group')[0] if arcgis_pro else \
             arcpymapping.ListLayers(mxd, "Empty Group", df)[0]
-        if ".gdb" in nodes_featureclass or ".gdb" in reaches_featureclass:
+        if (nodes_featureclass and ".gdb" in nodes_featureclass) or (reaches_featureclass and ".gdb" in reaches_featureclass):
             empty_group_layer.name = os.path.basename(os.path.dirname(nodes_featureclass)).replace(".gdb","") if nodes_featureclass else os.path.dirname(reaches_featureclass)
 
         def addLayer(layer_source, source, group=None, workspace_type="ACCESS_WORKSPACE", new_name=None,
