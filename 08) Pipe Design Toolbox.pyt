@@ -236,7 +236,7 @@ class PipeDimensionToolTAPro(object):
         mxd = arcpy.mapping.MapDocument("CURRENT")
         if not pipe_layer:
             links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
-                 lyr.getSelectionSet() and "diameter" in [field.name.lower() for field in arcpy.ListFields(lyr)]
+                 lyr.getSelectionSet() and "uplevel" in [field.name.lower() for field in arcpy.ListFields(lyr)]
                  and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)] and (
                              "sqlite" in arcpy.Describe(lyr).catalogPath or "mdb" in arcpy.Describe(lyr).catalogPath)
                  and lyr.visible]
@@ -346,6 +346,7 @@ class PipeDimensionToolTAPro(object):
         rainseries.additional_discharge = graph.maxInflow
         rainseries.scaling_factor = scaling_factor
 
+        arcpy.AddMessage(selected_pipes)
         target_manholes = [graph.network.links[link].fromnode for link in selected_pipes]
         arcpy.SetProgressor("step", "Tracing to every pipe selected", 0, len(target_manholes), 1)
 
