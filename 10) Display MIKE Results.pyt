@@ -1600,7 +1600,7 @@ class DisplayMIKE1DResults(object):
                 if "flood volume" in display_type.lower():
                     layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_nodes_floodvol.lyr",
                                      nodes_featureclass.replace(".shp", ""), group=empty_group_layer,
-                                     workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE",
+                                     workspace_type="SHAPEFILE_WORKSPACE" if "shp" in nodes_featureclass else "FILEGDB_WORKSPACE",
                                      new_name=os.path.basename(nodes_featureclass).replace(".shp", ""))
                     layer.showLabels = True
 
@@ -1608,7 +1608,7 @@ class DisplayMIKE1DResults(object):
                     layer = addLayer(
                         os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_nodes_depthdiff.lyr",
                         nodes_featureclass.replace(".shp", ""), group=empty_group_layer,
-                        workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE",
+                        workspace_type="SHAPEFILE_WORKSPACE" if "shp" in nodes_featureclass else "FILEGDB_WORKSPACE",
                         new_name=os.path.basename(nodes_featureclass).replace(".shp", ""))
                     layer.showLabels = False
 
@@ -1616,7 +1616,7 @@ class DisplayMIKE1DResults(object):
                     layer = addLayer(
                         os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_nodes.lyr",
                         nodes_featureclass.replace(".shp", ""), group=empty_group_layer,
-                        workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE",
+                        workspace_type="SHAPEFILE_WORKSPACE" if "shp" in nodes_featureclass else "FILEGDB_WORKSPACE",
                         new_name=os.path.basename(nodes_featureclass).replace(".shp", ""))
                     layer.showLabels = False
 

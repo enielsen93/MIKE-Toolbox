@@ -16,8 +16,8 @@ else:
     extension = ""
     # MU_model = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Fredensvang\MIKE\FRE_005\FRE_005.sqlite"
     # res1d_file = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Fredensvang\MIKE\FRE_005\FRE_005_m1d - Result Files\FRE_005_CDS5_156_240_valideringBaseDefault_Network_HD.res1d"
-    MU_model = r"C:\Papirkurv\_Til_ELNN\VIS_Plan_115_CDS5_2123\VIS_Plan_115_CDS5_2123.mdb"
-    res1d_file = r"C:\Papirkurv\_Til_ELNN\VIS_Plan_115_CDS5_2123\VIS_Plan_115_CDS5_157_240Base.PRF"
+    MU_model = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Gjellerup\Mike Urban\_ORIGINAL\Gjellerup_X06_1_V1_P2_u.soenderbakken_Rbassin.mdb"
+    res1d_file = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Gjellerup\Mike Urban\_ORIGINAL\NW_CDS5_1,5_240_X06-1_P2_u.sdr_RbassinBase.PRF"
 
 if not 'MU_model' in locals(): # Guessing where MIKE+ database is. Write path of MIKE-model above if not correct
     model_folder = os.path.dirname(os.path.dirname(res1d_file))
@@ -285,41 +285,69 @@ def getAvailableFilename(filepath):
 
 extension = extension if 'extension' in locals() else ""
 
-nodes_new_filename = getAvailableFilename(os.path.join(output_folder, os.path.basename(res1d_file).replace(".PRF","_nodes%s.shp" % extension)))
+def sanitizeFilename(filename):
+    parts = filename.rsplit('.', 1)
+    name = parts[0].replace('-', '_').replace('.', '_').replace(",","_")
+    return name + '.' + parts[1] if len(parts) == 2 else name
 
-links_new_filename = getAvailableFilename(os.path.join(output_folder, os.path.basename(res1d_file).replace(".PRF","_links%s.shp" % extension)))
+print("Creating Nodes and Reaches")
+# output_folder = r"C:\path\to\output"  # Replace with your path
+gdb_name = sanitizeFilename(os.path.basename(res1d_file)).replace(".res1d","_results%s" % extension).replace(".PRF","_results%s" % extension) + ".gdb"
+nodes_new_filename = "Nodes"
+links_new_filename = "Reaches"
 
-print("Creating Nodes")
+gdb_path = os.path.join(output_folder, gdb_name)
+nodes_output_filepath = os.path.join(gdb_path, nodes_new_filename)
+links_output_filepath = os.path.join(gdb_path, links_new_filename)
+
 while True:
     try:
-        nodes_output_filepath = arcpy.CreateFeatureclass_management(output_folder, os.path.basename(nodes_new_filename), "POINT")[0]
+        if not arcpy.Exists(gdb_path):
+            arcpy.CreateFileGDB_management(output_folder, gdb_name)
+
+        fields = ["Diameter", "Ground_lev", "Invert_lev", "Max_elev", "Flood_dep", "Flood_vol", "max_hl",
+                  "max_I_V", "flow_area", "flow_diam", "end_depth", "Surcha", "SurchaBal", "MaxSurcha"]
+        if arcpy.Exists(nodes_output_filepath):
+            arcpy.DeleteFeatures_management(nodes_output_filepath)
+            existing_fields = [f.name for f in arcpy.ListFields(nodes_output_filepath)]
+            for field in fields:
+                if field not in existing_fields:
+                    arcpy.management.AddField(nodes_output_filepath, field, "FLOAT")
+
+        else:
+            nodes_output_filepath = arcpy.CreateFeatureclass_management(gdb_path, nodes_new_filename, "POINT")[0]
+            arcpy.management.AddField(nodes_output_filepath, "MUID", "TEXT")
+            arcpy.management.AddField(nodes_output_filepath, "NetTypeNo", "SHORT")
+
+            # for field in ["Diameter", "Ground_lev", "Invert_lev", "Max_elev", "Flood_dep", "Flood_vol", "max_hl", "max_I_V", "flow_area", "flow_diam", "end_depth", "Surcha", "SurchaBal", "MaxSurcha"]:
+            # arcpy.management.AddField(nodes_output_filepath, field, "FLOAT", 8, 2)
+            for field in fields:
+                arcpy.management.AddField(nodes_output_filepath, field, "FLOAT")
+
+        fields = ["Diameter", "MaxQ", "SumQ", "Up_MaxE", "Dw_MaxE", "EndQ", "MinQ", "MaxV", "FillDeg", "EnergyGr", "FrictionLo",
+                          "MaxTau", "Depthdiff"]
+        if arcpy.Exists(links_output_filepath):
+            arcpy.DeleteFeatures_management(links_output_filepath)
+
+            existing_fields = [f.name for f in arcpy.ListFields(links_output_filepath)]
+            for field in fields:
+                if field not in existing_fields:
+                    arcpy.management.AddField(links_output_filepath, field, "FLOAT")
+
+        else:
+            links_output_filepath = arcpy.CreateFeatureclass_management(gdb_path, links_new_filename, "POLYLINE")[0]
+            arcpy.management.AddField(links_output_filepath, "MUID", "TEXT")
+            arcpy.management.AddField(links_output_filepath, "NetTypeNo", "SHORT")
+            for field in fields:
+                arcpy.management.AddField(links_output_filepath, field, "FLOAT")
+
         break
     except arcpy.ExecuteError as e:
         if "ERROR 000464: Cannot get exclusive schema lock" in str(e):
-            input("The file %s is locked. Press enter to retry, after unlocking the file..." % (os.path.join(output_folder, os.path.basename(nodes_new_filename))))
+            input("The file %s is locked. Press enter to retry, after unlocking the file..." % fc_path)
         else:
             raise
 
-arcpy.management.AddField(nodes_output_filepath, "MUID", "TEXT")
-arcpy.management.AddField(nodes_output_filepath, "NetTypeNo", "SHORT")
-for field in ["Diameter", "Ground_lev", "Invert_lev", "Max_elev", "Flood_dep", "Flood_vol", "max_hl", "max_I_V", "flow_area", "flow_diam", "end_depth", "Surcha", "SurchaBal", "MaxSurcha"]:
-    arcpy.management.AddField(nodes_output_filepath, field, "FLOAT", 8, 2)
-
-print("Creating Links")
-while True:
-    try:
-        links_output_filepath = arcpy.CreateFeatureclass_management(output_folder, os.path.basename(links_new_filename), "POLYLINE")[0]
-        break
-    except arcpy.ExecuteError as e:
-        if "ERROR 000464: Cannot get exclusive schema lock" in str(e):
-            input("The file %s is locked. Press enter to retry, after unlocking the file..." % (
-                os.path.join(output_folder, os.path.basename(nodes_new_filename))))
-        else:
-            raise
-arcpy.management.AddField(links_output_filepath, "MUID", "TEXT")
-arcpy.management.AddField(links_output_filepath, "NetTypeNo", "SHORT")
-for field in ["Diameter", "MaxQ", "SumQ", "EndQ", "MinQ", "MaxV", "FillDeg", "EnergyGr", "FrictionLo", "MaxTau", "Depthdiff"]:
-    arcpy.management.AddField(links_output_filepath, field, "FLOAT", 10, 6)
 
 def bretting(y, max_discharge, full_discharge, di):
     q_div_qf = 0.46 - 0.5 * math.cos(np.pi * y / di) + 0.04 * math.cos(2 * np.pi * y / di)
@@ -390,4 +418,4 @@ with arcpy.da.InsertCursor(nodes_output_filepath, ["SHAPE@", "MUID", "Diameter",
 
 from datetime import datetime
 now = datetime.now()
-print("Code run at", now.strftime("%H:%M:%S"))
+print("Code run at %s - simulation run at %s" % (now.strftime("%H:%M"), datetime.fromtimestamp(os.path.getmtime(res1d_file)).strftime("%H:%M")))
