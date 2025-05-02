@@ -113,7 +113,7 @@ class PipeDimensionToolTAPro(object):
             datatype="GPFeatureLayer",
             parameterType="Required",
             direction="Input")
-        pipe_layer.filter.list = ["Polyline"]
+        # pipe_layer.filter.list = ["Polyline"]
 
         reaches = arcpy.Parameter(
             displayName="Trace network through:",
@@ -234,14 +234,15 @@ class PipeDimensionToolTAPro(object):
         runoff_file = parameters[3].ValueAsText
 
         mxd = arcpy.mapping.MapDocument("CURRENT")
-        links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
-                 lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
+        if not pipe_layer:
+            links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
+                 lyr.getSelectionSet() and "diameter" in [field.name.lower() for field in arcpy.ListFields(lyr)]
                  and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)] and (
                              "sqlite" in arcpy.Describe(lyr).catalogPath or "mdb" in arcpy.Describe(lyr).catalogPath)
                  and lyr.visible]
 
-        if links and not pipe_layer:
-            parameters[0].value = links
+            if links:
+                parameters[0].value = links[0]
 
         if pipe_layer and not parameters[2].Value:
             parameters[2].Value = "Diameter" if "diameter" in [f.name.lower() for f in arcpy.ListFields(pipe_layer)] else parameters[2].Value
