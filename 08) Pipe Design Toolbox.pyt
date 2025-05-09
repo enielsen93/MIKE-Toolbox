@@ -244,8 +244,9 @@ class PipeDimensionToolTAPro(object):
             if links:
                 parameters[0].value = links[0]
 
-        if pipe_layer and not parameters[2].Value:
-            parameters[2].Value = "Diameter" if "diameter" in [f.name.lower() for f in arcpy.ListFields(pipe_layer)] else parameters[2].Value
+        if pipe_layer:
+            parameters[2].filter.list = [f.name for f in arcpy.ListFields(pipe_layer)]
+            parameters[2].Value = "Diameter" if "diameter" in [field.lower() for field in parameters[2].filter.list] else parameters[2].Value
 
         if pipe_layer and not runoff_file:
             MU_database = os.path.dirname(arcpy.Describe(pipe_layer).catalogPath).replace("\mu_Geometry", "")
@@ -1179,15 +1180,15 @@ class CopyDiameter(object):
                         fields[i] = "SHAPE@"
                 return fields
 
-        if parameters[0].altered:
+        if parameters[0].altered and not parameters[0].hasBeenValidated:
             reference_feature_layer = parameters[0].ValueAsText
 
             parameters[2].filter.list = changeShapeFieldname([f.name for f in arcpy.Describe(reference_feature_layer).fields])
 
-        if "Diameter" in parameters[2].filter.list and not parameters[2].value:
-            parameters[2].value = "Diameter"
-            if "MaterialID" in parameters[2].filter.list:
-                parameters[2].value = ["Diameter", "MaterialID"]
+        # if "diameter" in [field.lower() for field in parameters[2].filter.list] and not parameters[2].hasBeenValidated:
+        #     parameters[2].value = "Diameter"
+        #     if "MaterialID" in parameters[2].filter.list:
+        #         parameters[2].value = ["Diameter", "MaterialID"]
         
         if parameters[1].ValueAsText:
             MU_database = os.path.dirname(os.path.dirname(arcpy.Describe(target_feature_layer).catalogPath))
@@ -1385,7 +1386,7 @@ class CopyDiameter(object):
                 for row in cursor:
                     # arcpy.AddMessage((fields, row))
                     if match_by.lower() == "FROMNODE-TONODE".lower():
-                        muid_field_i = [i for field, i in enumerate(fields) if field.lower() == "muid"]
+                        muid_field_i = [i for i,field in enumerate(fields) if field.lower() == "muid"]
                         match_MUID = [link.muid for link in reference_links if link.fromnode.lower() == target_network.links[row[muid_field_i]].fromnode and link.tonode.lower() == target_network.links[row[muid_field_i]].tonode]
                         arcpy.AddMessage("FEATURE NOT SUPPORTED YET")
                         return
@@ -1401,10 +1402,10 @@ class CopyDiameter(object):
                         for field_i, field in enumerate(fields):
                             # arcpy.AddMessage(copy_field)
                             if field.lower() in [f.lower() for f in copy_field]:
-                                # arcpy.AddMessage(field)
-                                arcpy.AddMessage(
-                                    "Changed %s field %s from %s to %s" % (row[match_by_field_i], field, row[field_i], getattr(reference, field.lower())))
-                                row[field_i] = getattr(reference, field.lower())
+                                if row[field_i] != getattr(reference, field.lower()):
+                                    arcpy.AddMessage(
+                                        "Changed %s field %s from %s to %s" % (row[match_by_field_i], field, row[field_i], getattr(reference, field.lower())))
+                                    row[field_i] = getattr(reference, field.lower())
                             elif field == "SHAPE":
                                 shape = deepcopy(row[field_i])
                                 row[field_i] = shape
@@ -1493,7 +1494,7 @@ class InterpolateInvertLevels(object):
         MU_database = (os.path.dirname(os.path.dirname(arcpy.Describe(pipe_layer).catalogPath)) if ".mdb" in arcpy.Describe(pipe_layer).catalogPath else
                         os.path.dirname(arcpy.Describe(pipe_layer).catalogPath)).replace("!delete!","")
         is_sqlite = True if ".sqlite" in MU_database else False        
-        
+
         links_MUIDs = [row[0] for row in arcpy.da.SearchCursor(pipe_layer,["MUID"])]
         msm_Node = os.path.join(MU_database, "msm_Node")
         msm_Link = os.path.join(MU_database, "msm_Link")
