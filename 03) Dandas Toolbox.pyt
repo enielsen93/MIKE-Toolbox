@@ -813,7 +813,7 @@ class CopyMikeUrbanFeatures(object):
         #Define parameter definitions
         
         MU_database = arcpy.Parameter(
-            displayName="Mike Urban Database to copy features to:",
+            displayName="MIKE+ / MIKE Urban Database to copy features to:",
             name="MU_database",
             datatype="DEWorkspace",
             parameterType="Required",
@@ -821,30 +821,45 @@ class CopyMikeUrbanFeatures(object):
         MU_database.filter.list = ["mdb", "sqlite"]
         
         msm_Node = arcpy.Parameter(
-            displayName="Manhole Layers:",
+            displayName="Manhole Layer:",
             name="msm_Node",
             datatype="GPFeatureLayer",
-            multiValue = True,
             parameterType="Optional",
             direction="Input")
         
         msm_Link = arcpy.Parameter(
-            displayName="Link Layers:",
+            displayName="Link Layer:",
             name="msm_Link",
             datatype="GPFeatureLayer",
-            multiValue = True,
             parameterType="Optional",
             direction="Input")
         
         ms_Catchment = arcpy.Parameter(
-            displayName="Catchment Layers:",
+            displayName="Catchment Layer:",
             name="ms_Catchment",
             datatype="GPFeatureLayer",
-            multiValue = True,
             parameterType="Optional",
             direction="Input")
+
+        transfer_mode = arcpy.Parameter(
+            displayName="Transfer Mode (if MIKE+)",
+            name="transfer_mode",
+            datatype="String",
+            parameterType="Required",
+            direction="Input"
+        )
+        transfer_mode.filter.type = "ValueList"
+        transfer_mode.filter.list = [
+            "Append",
+            "Append & Skip Existing",
+            "Append & Update",
+            "Overwrite",
+            "Sync",
+            "Update"
+        ]
+        transfer_mode.value = "Append & Update"  # default value
         
-        params = [MU_database, msm_Node, msm_Link, ms_Catchment]
+        params = [MU_database, msm_Node, msm_Link, ms_Catchment, transfer_mode]
         
         return params
 
@@ -862,24 +877,30 @@ class CopyMikeUrbanFeatures(object):
             nodes = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Point'
                     and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)]]
             if nodes:
-                parameters[1].value = nodes
+                parameters[1].value = nodes[0]
 
             links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
                     and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)]]
             if links:
-                parameters[2].value = links
+                parameters[2].value = links[0]
 
             catchments = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polygon'
                         and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)]]
             if catchments:
-                parameters[3].value = catchments
+                parameters[3].value = catchments[0]
 
         if not parameters[0].valueAsText:
             mxd = arcpy.mapping.MapDocument("CURRENT")
             database = [lyr.dataSource for lyr in arcpy.mapping.ListLayers(mxd) if not lyr.getSelectionSet() and lyr.isFeatureLayer and ".mdb" in lyr.dataSource]
             if database:
-                database = re.findall(r"(.+)(?=\.mdb)", database[0])[0] + ".mdb"
+                database = re.findall(r".+\.(?:mdb|sqlite)", database[0], re.IGNORECASE)[0]
                 parameters[0].value = database
+
+        if parameters[0].value and ".sqlite" in parameters[0].valueAsText:
+            parameters[4].enabled = True
+        else:
+            parameters[4].enabled = False
+
 
         # if parameters[0].valueAsText:
         #     MU_database = parameters[0].valueAsText
@@ -899,125 +920,132 @@ class CopyMikeUrbanFeatures(object):
 
     def execute(self, parameters, messages):
         MU_database = parameters[0].valueAsText
-        msm_Nodes = parameters[1].values
-        msm_Links = parameters[2].values
-        ms_Catchments = parameters[3].values
+        msm_Node = parameters[1].value
+        msm_Link = parameters[2].value
+        ms_Catchment = parameters[3].value
+        transfer_mode = parameters[4].ValueAsText
+
+        if transfer_mode == "Append & Update":
+            transfer_mode = "AppendUpdate"
+        elif transfer_mode == "Append & Skip Existing":
+            transfer_mode = "AppendExist"
+
+
         # arcpy.AddMessage((msm_Links, ".sqlite" in arcpy.Describe(msm_Links[0]).catalogPath))
-        if (msm_Nodes and ".sqlite" in arcpy.Describe(msm_Nodes[0]).catalogPath) or (msm_Links and ".sqlite" in arcpy.Describe(msm_Links[0]).catalogPath) or (ms_Catchments and ".sqlite" in arcpy.Describe(ms_Catchments[0]).catalogPath):
+        if (msm_Node and ".sqlite" in arcpy.Describe(msm_Node).catalogPath) or (msm_Link and ".sqlite" in arcpy.Describe(msm_Link).catalogPath) or (ms_Catchment and ".sqlite" in arcpy.Describe(ms_Catchment).catalogPath):
             source_type = 'MUPlusDB'
         else:
             source_type = 'Geodatabase'
 
         is_sqlite = True if ".sqlite" in MU_database else False
         arcpy.env.overwriteOutput = True
-
+        nodes_count, links_count, catchments_count = (0,0,0)
         import random
-        nodes_count = 0
-        if msm_Nodes:
-            for i, msm_Node in enumerate(msm_Nodes):
-                selected = arcpy.Select_analysis(msm_Node, "in_memory\msm_Node_%d" % (i))
-                nodes_in_msm_Node = [row[0] for row in arcpy.da.SearchCursor(selected, ["MUID"])]
-                for node in nodes_in_msm_Node:
-                    nodes_count += 1
+        if msm_Node:
+            nodes_in_msm_Node = [row[0] for row in arcpy.da.SearchCursor(msm_Node, ["MUID"])]
+            nodes_count = len(nodes_in_msm_Node)
 
-        link_count = 0
-        if msm_Links:
-            for i, msm_Link in enumerate(msm_Links):
-                selected = arcpy.Select_analysis(msm_Link, "in_memory\msm_Link_%d" % (i))
-                links_in_msm_Link = [row[0] for row in arcpy.da.SearchCursor(selected, ["MUID"])]
-                for link in links_in_msm_Link:
-                    link_count += 1
+        if msm_Link:
+            links_in_msm_Link = [row[0] for row in arcpy.da.SearchCursor(msm_Link, ["MUID"])]
+            links_count = len(links_in_msm_Link)
 
-        catchment_count = 0
-        if ms_Catchments:
-            for i, ms_Catchment in enumerate(ms_Catchments):
-                selected = arcpy.Select_analysis(ms_Catchment, "in_memory\ms_Catchment_%d" % (i))
-                catchments_in_ms_Catchment = [row[0] for row in arcpy.da.SearchCursor(selected, ["MUID"])]
-                for catchment in catchments_in_ms_Catchment:
-                    catchment_count += 1
+        if ms_Catchment:
+            catchments_in_ms_Catchment = [row[0] for row in arcpy.da.SearchCursor(ms_Catchment, ["MUID"])]
+            catchments_count = len(catchments_in_ms_Catchment)
 
         if is_sqlite:
             arcpy.AddMessage("SQLITE database. Using XML file in MIKE+ for import.")
             with open(os.path.dirname(os.path.realpath(__file__)) + r"\Data\XML\DDS_to_MIKE+.xml", 'r') as f:
                 xml_txt = f.readlines()
 
-            if not msm_Nodes:
+                # Pattern: find the correct <TablePropertyValue ...> with property="TransferMode"
+                pattern = r'(<TablePropertyValue[^>]*property="TransferMode"[^>]*value=")([^"]+)(")'
+
+                for i, line in enumerate(xml_txt):
+                    if re.search(pattern, line):
+                        xml_txt[i] = re.sub(pattern, r'\1%s\3' % transfer_mode, line)
+
+            if not msm_Node:
                 enabled_lineno = [i for i, line in enumerate(xml_txt) if 'property="msm_Node" value=' in line][0]
                 xml_txt[enabled_lineno] = re.sub('value *= *"[^"]+"', 'value="False"', xml_txt[enabled_lineno])
 
-            if not msm_Links:
+            if not msm_Link:
                 enabled_lineno = [i for i, line in enumerate(xml_txt) if 'property="msm_Link" value=' in line][0]
                 xml_txt[enabled_lineno] = re.sub('value *= *"[^"]+"', 'value="False"', xml_txt[enabled_lineno])
 
-        if pythonaddins.MessageBox("You are copying %d manholes, %d pipes, and %d catchments. Continue?" % (nodes_count, link_count, catchment_count),
+        if pythonaddins.MessageBox("You are copying %d manholes, %d pipes, and %d catchments. Continue?" % (nodes_count, links_count, catchments_count),
                                    "Confirm copy?", 1) == "OK":
-            if msm_Nodes:
-                for i, msm_Node in enumerate(msm_Nodes):
-                    reference_MU_database = os.path.dirname(arcpy.Describe(msm_Node).catalogPath)
-                    nodes_in_database = [row[0] for row in arcpy.da.SearchCursor(MU_database + "\msm_Node", ["MUID"])]
-                    selected = arcpy.Select_analysis(msm_Node, "in_memory\msm_Node_%d" % (i+1))
-                    nodes_in_msm_Node = [row[0] for row in arcpy.da.SearchCursor(selected, ["MUID"])]
-                    duplicate_nodes = np.intersect1d(nodes_in_database, nodes_in_msm_Node)
-                    if duplicate_nodes.size > 0:
-                        response = pythonaddins.MessageBox("The following manholes are already in the Mike Urban Database: %s" % ", ".join(duplicate_nodes)
-                                                           + " Would you like to remove the existing manholes first? (No: The tool will add those duplicate manholes anyway."
-                                                           + " Cancel: Skip those manholes)",
-                                                           "Remove duplicate features?", 3)
-                        if is_sqlite and response == "Yes":
-                            arcpy.AddError("Function not supported for .sqlite database")
-                            return
-                        else:
-                            if response == "Yes":
-                                edit = arcpy.da.Editor(MU_database)
-                                edit.startEditing(False, True)
-                                edit.startOperation()
-                                with arcpy.da.UpdateCursor(MU_database + "\msm_Node", ["MUID"], where_clause = "MUID IN ('%s')" % "', '".join(duplicate_nodes)) as cursor:
-                                    for row in cursor:
-                                        cursor.deleteRow()
-                                edit.stopOperation()
-                                edit.stopEditing(True)
-                            elif response == "Cancel":
-                                selected = arcpy.Select_analysis(selected, "in_memory\msm_Node_%d_filtered" % (i), where_clause = "MUID NOT IN ('%s')" % "', '".join(duplicate_nodes))
-
+            if msm_Node:
+                reference_MU_database = os.path.dirname(arcpy.Describe(msm_Node).catalogPath)
+                nodes_in_database = [row[0] for row in arcpy.da.SearchCursor(MU_database + "\msm_Node", ["MUID"])]
+                # selected = arcpy.Select_analysis(msm_Node, "in_memory\msm_Node_%d" % (i+1))
+                # nodes_in_msm_Node = [row[0] for row in arcpy.da.SearchCursor(selected, ["MUID"])]
+                duplicate_nodes = np.intersect1d(nodes_in_database, nodes_in_msm_Node)
+                if duplicate_nodes.size > 0:
                     if is_sqlite:
-                        MUIDs = [row[0] for row in arcpy.da.SearchCursor(selected, ["MUID"])]
-                        # sql_expression = "ATTACH DATABASE %s AS source; SELECT * INTO main.msm_Node FROM source.msm_Node WHERE MUID IN ('%s')" % (reference_MU_database, "', '".join(MUIDs))
-
-                        source_lineno = \
-                            [i for i, line in enumerate(xml_txt) if '<JobPropertyValue property="Source"' in line][0]
-                        xml_txt[source_lineno] = re.sub('value *= *"[^"]+"', 'value="%s"' % reference_MU_database,
-                                                        xml_txt[source_lineno])
-
-                        msm_Node_where_clause_lineno = [i for i, line in enumerate(xml_txt) if '"msm_Node_where_clause"' in line][0]
-                        xml_txt[msm_Node_where_clause_lineno] = re.sub('value *= *"[^"]+"', "value=\"MUID IN ('%s')\"" % "', '".join(MUIDs),
-                                                                       xml_txt[msm_Node_where_clause_lineno])
-
-                        # Change source type if MIKE+
-                        source_type_lineno = [i for i, line in enumerate(xml_txt) if 'sourceTypeParameter' in line][0]
-
-                        xml_txt[source_type_lineno] = xml_txt[source_type_lineno].replace("sourceTypeParameter",
-                                                                                                source_type)
-
-                        # arcpy.AddMessage(sql_expression)
+                        response = pythonaddins.MessageBox(
+                            "The following manholes are already in the MIKE+ Database: %s" % ", ".join(
+                                duplicate_nodes), "Confirm?", 1)
+                        if response == "Cancel":
+                            return
                     else:
-                        arcpy.Append_management(selected, MU_database + "\msm_Node", schema_type = "NO_TEST")
+                        response = pythonaddins.MessageBox("The following manholes are already in the Mike Urban Database: %s" % ", ".join(duplicate_nodes)
+                                                       + " Would you like to remove the existing manholes first? (No: The tool will add those duplicate manholes anyway."
+                                                       + " Cancel: Skip those manholes)",
+                                                       "Remove duplicate features?", 3)
+                        if response == "Yes":
+                            edit = arcpy.da.Editor(MU_database)
+                            edit.startEditing(False, True)
+                            edit.startOperation()
+                            with arcpy.da.UpdateCursor(MU_database + "\msm_Node", ["MUID"], where_clause = "MUID IN ('%s')" % "', '".join(duplicate_nodes)) as cursor:
+                                for row in cursor:
+                                    cursor.deleteRow()
+                            edit.stopOperation()
+                            edit.stopEditing(True)
+                        elif response == "Cancel":
+                            return
 
-            if msm_Links:
+                if is_sqlite:
+                    MUIDs = nodes_in_msm_Node
+                    # sql_expression = "ATTACH DATABASE %s AS source; SELECT * INTO main.msm_Node FROM source.msm_Node WHERE MUID IN ('%s')" % (reference_MU_database, "', '".join(MUIDs))
+
+                    source_lineno = \
+                        [i for i, line in enumerate(xml_txt) if '<JobPropertyValue property="Source"' in line][0]
+                    xml_txt[source_lineno] = re.sub('value *= *"[^"]+"', 'value="%s"' % reference_MU_database,
+                                                    xml_txt[source_lineno])
+
+                    msm_Node_where_clause_lineno = [i for i, line in enumerate(xml_txt) if '"msm_Node_where_clause"' in line][0]
+                    xml_txt[msm_Node_where_clause_lineno] = re.sub('value *= *"[^"]+"', "value=\"MUID IN ('%s')\"" % "', '".join(MUIDs),
+                                                                   xml_txt[msm_Node_where_clause_lineno])
+
+                    # Change source type if MIKE+
+                    source_type_lineno = [i for i, line in enumerate(xml_txt) if 'sourceTypeParameter' in line][0]
+
+                    xml_txt[source_type_lineno] = xml_txt[source_type_lineno].replace("sourceTypeParameter",
+                                                                                            source_type)
+
+                else:
+                    selected = arcpy.Select_analysis(msm_Node, "in_memory\msm_Node")
+                    arcpy.Append_management(selected, MU_database + "\msm_Node", schema_type = "NO_TEST")
+
+            if msm_Link:
                 links_in_database = [row[0] for row in arcpy.da.SearchCursor(MU_database + "\msm_Link", ["MUID"])]
-                for i, msm_Link in enumerate(msm_Links):
-                    reference_MU_database = os.path.dirname(arcpy.Describe(msm_Link).catalogPath)
-                    selected = arcpy.Select_analysis(msm_Link, "in_memory\msm_Link_%d" % (i))
-                    links_in_msm_Link = [row[0] for row in arcpy.da.SearchCursor(selected, ["MUID"])]
-                    duplicate_links = np.intersect1d(links_in_database, links_in_msm_Link)
-                    if duplicate_links.size > 0:
+                reference_MU_database = os.path.dirname(arcpy.Describe(msm_Link).catalogPath)
+
+                duplicate_links = np.intersect1d(links_in_database, links_in_msm_Link)
+                if duplicate_links.size > 0:
+                    if is_sqlite:
+                        response = pythonaddins.MessageBox(
+                            "The following links are already in the MIKE+ Database: %s" % ", ".join(
+                                duplicate_links), "Confirm?", 1)
+                        if response == "Cancel":
+                            return
+                    else:
                         response = pythonaddins.MessageBox("The following pipes are already in the Mike Urban Database: %s" % ", ".join(duplicate_links)
                                                            + " Would you like to remove the existing pipes first? (No: The tool will add those duplicate pipes anyway."
                                                            + " Cancel: Skip those pipes)",
                                                            "Remove duplicate features?", 3)
                         if response == "Yes":
-                            if is_sqlite:
-                                arcpy.AddError("Function not supported for .sqlite database")
-                                return
                             edit = arcpy.da.Editor(MU_database)
                             edit.startEditing(False, True)
                             edit.startOperation()
@@ -1028,63 +1056,59 @@ class CopyMikeUrbanFeatures(object):
                             edit.stopEditing(True)
                         elif response == "Cancel":
                             selected = arcpy.Select_analysis(selected, "in_memory\msm_Link_%d_filtered" % (i), where_clause = "MUID NOT IN ('%s')" % "', '".join(duplicate_links))
-                    if is_sqlite:
-                        MUIDs = [row[0] for row in arcpy.da.SearchCursor(selected, ["MUID"])]
-                        source_lineno = [i for i,line in enumerate(xml_txt) if '<JobPropertyValue property="Source"' in line][0]
-                        xml_txt[source_lineno] = re.sub('value *= *"[^"]+"', 'value="%s"' % reference_MU_database, xml_txt[source_lineno])
+                if is_sqlite:
+                    MUIDs = links_in_msm_Link
+                    source_lineno = [i for i,line in enumerate(xml_txt) if '<JobPropertyValue property="Source"' in line][0]
+                    xml_txt[source_lineno] = re.sub('value *= *"[^"]+"', 'value="%s"' % reference_MU_database, xml_txt[source_lineno])
 
-                        msm_Link_where_clause_lineno = \
-                            [i for i, line in enumerate(xml_txt) if '"msm_Link_where_clause"' in line][0]
-                        xml_txt[msm_Link_where_clause_lineno] = re.sub('value *= *"[^"]+"',
-                                                                       "value=\"MUID IN ('%s')\"" % "', '".join(MUIDs),
-                                                                       xml_txt[msm_Link_where_clause_lineno])
+                    msm_Link_where_clause_lineno = \
+                        [i for i, line in enumerate(xml_txt) if '"msm_Link_where_clause"' in line][0]
+                    xml_txt[msm_Link_where_clause_lineno] = re.sub('value *= *"[^"]+"',
+                                                                   "value=\"MUID IN ('%s')\"" % "', '".join(MUIDs),
+                                                                   xml_txt[msm_Link_where_clause_lineno])
 
-                        fields = [field.name.upper() for field in arcpy.ListFields(selected)]
+                    fields = [field.name.upper() for field in arcpy.ListFields(msm_Link)]
 
-                        if "FROMNODEID" in fields:
-                            arcpy.AddMessage("BOB")
-                            FROMNODEID_where_clause_lineno = \
-                                [i for i, line in enumerate(xml_txt) if 'property="FromNode' in line][0]
-                            xml_txt[FROMNODEID_where_clause_lineno] = xml_txt[FROMNODEID_where_clause_lineno].replace('value="FROMNODE"','value="FromNodeID"')
+                    if "FROMNODEID" in fields:
+                        FROMNODEID_where_clause_lineno = \
+                            [i for i, line in enumerate(xml_txt) if 'property="FromNode' in line][0]
+                        xml_txt[FROMNODEID_where_clause_lineno] = xml_txt[FROMNODEID_where_clause_lineno].replace('value="FROMNODE"','value="FromNodeID"')
 
-                            TONODEID_where_clause_lineno = \
-                                [i for i, line in enumerate(xml_txt) if 'property="ToNode' in line][0]
-                            xml_txt[TONODEID_where_clause_lineno] = xml_txt[TONODEID_where_clause_lineno].replace('value="TONODE"','value="ToNodeID"')
+                        TONODEID_where_clause_lineno = \
+                            [i for i, line in enumerate(xml_txt) if 'property="ToNode' in line][0]
+                        xml_txt[TONODEID_where_clause_lineno] = xml_txt[TONODEID_where_clause_lineno].replace('value="TONODE"','value="ToNodeID"')
 
-                        try:
-                            source_type_lineno = [i for i, line in enumerate(xml_txt) if 'sourceTypeParameter' in line][0]
+                    try:
+                        source_type_lineno = [i for i, line in enumerate(xml_txt) if 'sourceTypeParameter' in line][0]
 
-                            xml_txt[source_type_lineno] = xml_txt[source_type_lineno].replace("sourceTypeParameter",
-                                                                                          source_type)
-                        except Exception as e:
-                            pass
-                    else:
-                        try:
-                            # arcpy.AddMessage([field.name.lower() for field in arcpy.ListFields(MU_database + "\msm_Link")])
-                            if not "fromnode" in [field.name.lower() for field in arcpy.ListFields(MU_database + "\msm_Link")]:
-                                arcpy.DeleteField_management(selected, ["FROMNODE","TONODE"])
-                            elif "fromnode" in [field.name.lower() for field in arcpy.ListFields(MU_database + "\msm_Link")] and not "fromnode" in [field.name.lower() for field in arcpy.ListFields(selected)]:
-                                for field in ["FROMNODE","TONODE"]:
-                                    arcpy.AddField_management(selected, field, "TEXT", field_length = 50, field_is_nullable="NULLABLE")
-                                # pythonaddins.MessageBox("Attempting to add FROMNODE and TONODE to %s. Close the Mike Urban model before proceeding." % (MU_database + "\msm_Link"), "Close Mike Urban", 0)
-                                # for field in ["FROMNODE", "TONODE"]:
-                                # arcpy.AddField_management(MU_database + "\msm_Link", field, "TEXT", field_length = 255)
-                            arcpy.Append_management(selected, MU_database + "\msm_Link", schema_type = "NO_TEST")
-                        except Exception as e:
+                        xml_txt[source_type_lineno] = xml_txt[source_type_lineno].replace("sourceTypeParameter",
+                                                                                      source_type)
+                    except Exception as e:
+                        pass
+                else:
+                    try:
+                        selected = arcpy.Select_analysis(msm_Link, "in_memory\msm_Link")
+                        # arcpy.AddMessage([field.name.lower() for field in arcpy.ListFields(MU_database + "\msm_Link")])
+                        if not "fromnode" in [field.name.lower() for field in arcpy.ListFields(MU_database + "\msm_Link")]:
+                            arcpy.DeleteField_management(selected, ["FROMNODE","TONODE"])
+                        elif "fromnode" in [field.name.lower() for field in arcpy.ListFields(MU_database + "\msm_Link")] and not "fromnode" in [field.name.lower() for field in arcpy.ListFields(selected)]:
+                            for field in ["FROMNODE","TONODE"]:
+                                arcpy.AddField_management(selected, field, "TEXT", field_length = 50, field_is_nullable="NULLABLE")
+                            # pythonaddins.MessageBox("Attempting to add FROMNODE and TONODE to %s. Close the Mike Urban model before proceeding." % (MU_database + "\msm_Link"), "Close Mike Urban", 0)
+                            # for field in ["FROMNODE", "TONODE"]:
+                            # arcpy.AddField_management(MU_database + "\msm_Link", field, "TEXT", field_length = 255)
+                        arcpy.Append_management(selected, MU_database + "\msm_Link", schema_type = "NO_TEST")
+                    except Exception as e:
+                        arcpy.AddError("FromNode and ToNode not found in Mike Urban Database. Try manually copying the Pipes")
+                        arcpy.AddError(traceback.format_exc())
+                        arcpy.AddError(e)
+                        # raise(e)
 
-                            arcpy.AddError("FromNode and ToNode not found in Mike Urban Database. Try manually copying the Pipes")
-                            arcpy.AddError(traceback.format_exc())
-                            arcpy.AddError(e)
-                            # raise(e)
 
-
-            if ms_Catchments:
-                arcpy.AddMessage(is_sqlite)
+            if ms_Catchment:
                 if is_sqlite:
                     i = 0
-                    arcpy.AddMessage(ms_Catchments)
-                    reference_MU_database = os.path.dirname(arcpy.Describe(ms_Catchments[0]).catalogPath)
-                    arcpy.AddMessage(reference_MU_database)
+                    reference_MU_database = os.path.dirname(arcpy.Describe(ms_Catchment).catalogPath)
                     source_lineno = \
                     [i for i, line in enumerate(xml_txt) if '<JobPropertyValue property="Source"' in line][0]
                     xml_txt[source_lineno] = re.sub('value *= *"[^"]+"', 'value="%s"' % reference_MU_database,
@@ -1097,8 +1121,7 @@ class CopyMikeUrbanFeatures(object):
                         xml_txt[source_type_lineno] = xml_txt[source_type_lineno].replace("sourceTypeParameter",
                                                                                           source_type)
 
-                    selected = arcpy.Select_analysis(ms_Catchments[0], "in_memory\msm_Catchment_%d" % (i))
-                    MUIDs = [row[0] for row in arcpy.da.SearchCursor(selected, ["MUID"])]
+                    MUIDs = catchments_in_ms_Catchment
                     msm_Catchment_where_clause_lineno = \
                         [i for i, line in enumerate(xml_txt) if '"msm_Catchment_where_clause"' in line][0]
                     xml_txt[msm_Catchment_where_clause_lineno] = re.sub('value *= *"[^"]+"',
@@ -1118,9 +1141,8 @@ class CopyMikeUrbanFeatures(object):
                     # arcpy.AddMessage(ms_Catchments)
                     for i, ms_Catchment in enumerate(ms_Catchments):
                         # arcpy.AddMessage(type(ms_Catchment))
-                        arcpy.AddMessage(arcpy.Describe(ms_Catchment).catalogPath)
                         if not ".mdb" in arcpy.Describe(ms_Catchment).catalogPath:
-                            selected = arcpy.Select_analysis(ms_Catchment, "in_memory\ms_Catchment_%d" % (i))
+                            selected = arcpy.Select_analysis(ms_Catchment, "in_memory\ms_Catchment")
 
                             ms_CatchmentMUIDs = [row[0] for row in arcpy.da.SearchCursor(selected,"MUID")]
                             duplicateMUIDs = [row[0] for row in arcpy.da.SearchCursor(os.path.join(MU_database,"msm_Catchment"),"MUID",where_clause = "MUID IN ('%s')" % ("', '".join(ms_CatchmentMUIDs)))]
@@ -1163,7 +1185,7 @@ class CopyMikeUrbanFeatures(object):
                                                               0,0.33))
                         else:
                             input_database = arcpy.Describe(ms_Catchment).catalogPath.split(".mdb")[0] + ".mdb"
-                            selected = arcpy.Select_analysis(ms_Catchment, "in_memory\ms_Catchment_%d" % (i))
+                            selected = arcpy.Select_analysis(ms_Catchment, "in_memory\ms_Catchment")
                             arcpy.Append_management(selected, os.path.join(MU_database,"ms_Catchment"),"NO_TEST")
                             MUIDs = [row[0] for row in arcpy.da.SearchCursor(selected, ["MUID"])]
                             # arcpy.management.Append(selected, MU_database + "\ms_Catchment")
@@ -1183,6 +1205,7 @@ class CopyMikeUrbanFeatures(object):
                             arcpy.AddMessage("CatchID IN ('%s')" % "', '".join(MUIDs))
                             arcpy.AddMessage([row[0] for row in arcpy.da.SearchCursor(selected_CatchCon, ["CatchID"])])
                             arcpy.management.Append(selected_CatchCon, MU_database + "\msm_CatchCon")
+
             if is_sqlite:
                 import tempfile
                 output_path = os.path.join(tempfile.gettempdir(), '%s.xml' % os.path.basename(reference_MU_database).split(".")[0])
