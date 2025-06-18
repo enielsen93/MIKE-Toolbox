@@ -1073,6 +1073,7 @@ class ExportToDDS(object):
                 self.dwlevel = None
                 self.net_type_no = 2
                 self.description = ""
+                self.element_s = None
 
             def outer_diameter(self, pipe_catalogue):
                 if self.material_id == "Plastic":# and self.diameter not in outer_diameters_plastic and self.diameter < 1.6:
@@ -1205,7 +1206,7 @@ class ExportToDDS(object):
         if msm_Link:
             with arcpy.da.SearchCursor(msm_Link,
                                        ["MUID", "SHAPE@", "Diameter", "MaterialID", "UpLevel", "DwLevel", "NetTypeNo",
-                                        "Description"]) as cursor:
+                                        "Description", "Element_S"]) as cursor:
                 for row in cursor:
                     links[row[0]] = Link(row[0], row[1])
                     link = links[row[0]]
@@ -1215,6 +1216,7 @@ class ExportToDDS(object):
                     if row[5]: link.dwlevel = row[5]
                     if row[6] and row[6] in [1,2,3]: link.net_type_no = row[6]
                     if row[7]: link.description = row[7]
+                    if row[8]: link.element_s = row[8]
 
         for node in nodes.values():
             node_dds = ET.SubElement(node_root, "Knude")
@@ -1228,8 +1230,10 @@ class ExportToDDS(object):
             ET.SubElement(node_dds, "TypeAfloebKode").text = "%d" % node.net_type_no
             ET.SubElement(node_dds, "XKoordinat").text = "%1.2f" % node.x
             ET.SubElement(node_dds, "YKoordinat").text = "%1.2f" % node.y
-            ET.SubElement(node_dds, "XLabel").text = "%1.2f" % (node.x + 5)
-            ET.SubElement(node_dds, "YLabel").text = "%1.2f" % (node.y + 5)
+
+            label_offset = [5, 5] if node.net_type_no == 2 else [-10, 5]
+            ET.SubElement(node_dds, "XLabel").text = "%1.2f" % (node.x + label_offset[0])
+            ET.SubElement(node_dds, "YLabel").text = "%1.2f" % (node.y + label_offset[1])
 
             if catchments_dict and dandas_deloplande:
                 catchment_items = ET.SubElement(node_dds, "DeloplandItems")
@@ -1270,6 +1274,11 @@ class ExportToDDS(object):
                     ET.SubElement(link_dds, "KategoriAfloebKode").text = "1"
                     ET.SubElement(link_dds, "TransportKode").text = "1"
                     ET.SubElement(link_dds, "TypeAfloebKode").text = "%d" % link.net_type_no
+
+                    if link.element_s == 11: #projekteret
+                        ET.SubElement(link_dds, "StatusKode").text = "6"
+                    elif link.element_s == 3 or link.element_s == 7: #eksisterende
+                        ET.SubElement(link_dds, "StatusKode").text = "1"
 
                     link_dds_parts = ET.SubElement(link_dds, 'DelLedningItems')
                     link_dds_part = ET.SubElement(link_dds_parts, 'DelLedning')
