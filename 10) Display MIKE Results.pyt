@@ -360,7 +360,7 @@ class DisplayFloodReturnPeriodFun(object):
                 arcpy.AddError(traceback.format_exc())
         
         arcpy.SetProgressorLabel("Creating manhole result file")
-        msm_NodeNew = arcpy.CopyFeatures_management(msm_Node, getAvailableFilename(arcpy.env.scratchGDB + "\NodeFloodReturn",
+        msm_NodeNew = arcpy.CopyFeatures_management(msm_Node, getAvailableFilename(os.path.join(arcpy.env.scratchGDB, "NodeFloodReturn"),
                                                                           parent=mike_urban_database)).getOutput(0)
         # arcpy.AddMessage(msm_NodeNew)
         arcpy.AddField_management (msm_NodeNew, "TCrit", "DOUBLE", 10, 5)
@@ -1407,7 +1407,7 @@ class DisplayMIKE1DResults(object):
             parameterType="Optional",
             multiValue=True,
             direction="Input")
-        display_type.filter.list = ["Flood volume", "Flood Depth", "Max Elevation / Headloss", "Peak Discharge", "Link Depth Difference", "Total Discharge"]
+        display_type.filter.list = ["Flood Volume", "Flood Depth", "Max Elevation / Headloss", "Surcharge Balance", "Peak Discharge", "Link Depth Difference", "Total Discharge"]
         display_type.value = ["Flood Volume", "Peak Discharge"]
 
         # res1d_filepath  = arcpy.Parameter(
@@ -1449,6 +1449,11 @@ class DisplayMIKE1DResults(object):
 
             # Get modification times and sort the candidates (newest first)
             file_mod_times = [(file, os.path.getmtime(file)) for file in candidate_files]
+
+            for i, (file, _) in enumerate(file_mod_times):
+                if ".gdb" in file and os.path.exists(os.path.join(file, "last_updated.text")):
+                    file_mod_times[i] = (file, os.path.getmtime(os.path.join(file, "last_updated.text")))
+
             sorted_files = sorted(file_mod_times, key=lambda x: x[1], reverse=True)
 
             # Assign the newest file containing "nodes" to parameters[1]
@@ -1496,8 +1501,12 @@ class DisplayMIKE1DResults(object):
         # python3_path = parameters[5].ValueAsText
         arcpy.AddMessage(display_type)
 
-        mxd = arcpy.mapping.MapDocument("CURRENT")
-        df = arcpy.mapping.ListDataFrames(mxd)[0]
+        if arcgis_pro:
+            mxd = arcpy.mp.ArcGISProject("CURRENT")
+            df = mxd.listMaps()[0]
+        else:
+            mxd = arcpy.mapping.MapDocument("CURRENT")
+            df = arcpy.mapping.ListDataFrames(mxd)[0]
 
         empty_group_mapped = arcpymapping.LayerFile(os.path.dirname(
             os.path.realpath(__file__)) + r"\Data\EmptyGroup.lyr") if arcgis_pro else arcpy.mapping.Layer(
@@ -1511,7 +1520,10 @@ class DisplayMIKE1DResults(object):
 
         def addLayer(layer_source, source, group=None, workspace_type="ACCESS_WORKSPACE", new_name=None,
                      definition_query=None):
-            if ".sqlite" in source:
+            if arcgis_pro and not ".lyrx" in layer_source and os.path.exists(layer_source.replace(".lyr", ".lyrx")):
+                layer_source = layer_source.replace(".lyr", ".lyrx")
+            arcpy.AddMessage(layer_source)
+            if source and ".sqlite" in source:
                 source_layer = arcpymapping.LayerFile(layer_source) if arcgis_pro else arcpy.mapping.Layer(source)
 
                 if group:
@@ -1557,7 +1569,6 @@ class DisplayMIKE1DResults(object):
                     arcpy.AddWarning(source)
                     pass
             else:
-                # arcpy.AddMessage(layer_source)
                 layer = arcpymapping.LayerFile(layer_source) if arcgis_pro else arcpymapping.Layer(layer_source)
                 if group:
                     if arcgis_pro:
@@ -1576,12 +1587,22 @@ class DisplayMIKE1DResults(object):
                 if new_name:
                     update_layer.name = new_name
 
-                if arcgis_pro:
-                    df.updateConnectionProperties(update_layer.connectionProperties['connection_info']['database'],
-                                                  os.path.dirname(source.replace(r"\mu_Geometry", "")))
-                else:
-                    update_layer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))),
-                                                   workspace_type, os.path.basename(source))
+                if source:
+                    if arcgis_pro:
+                        # CONFIRMED WORKING FOR SHAPEFILE -> FILEGDB
+                        arcpy.AddMessage(update_layer)
+                        cp = update_layer.connectionProperties
+                        if workspace_type == "FILEGDB_WORKSPACE":
+                            workspace_type = "File Geodatabase"
+                        arcpy.AddMessage(workspace_type)
+                        cp["connection_info"]['database'] = os.path.dirname(
+                            source.replace(r"\mu_Geometry", ""))  # output db path+name
+                        cp['dataset'] = os.path.basename(source)
+                        cp['workspace_factory'] = workspace_type
+                        update_layer.updateConnectionProperties(update_layer.connectionProperties, cp)
+                    else:
+                        update_layer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))),
+                                                       workspace_type, os.path.basename(source))
             return update_layer
 
         if nodes_featureclass:
@@ -1613,6 +1634,14 @@ class DisplayMIKE1DResults(object):
                         new_name=os.path.basename(nodes_featureclass).replace(".shp", ""))
                     layer.showLabels = False
 
+                if "Surcharge Balance".lower() in display_type.lower():
+                    arcpy.AddMessage(nodes_featureclass)
+                    layer = addLayer(
+                        os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_Surcharge_balance.lyr",
+                        nodes_featureclass.replace(".shp", ""), group=empty_group_layer,
+                        workspace_type="SHAPEFILE_WORKSPACE" if "shp" in nodes_featureclass else "FILEGDB_WORKSPACE")
+                    layer.showLabels = True
+
                 if "headloss" in display_type.lower():
                     layer = addLayer(
                         os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_nodes.lyr",
@@ -1638,7 +1667,8 @@ class DisplayMIKE1DResults(object):
                                  workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE",
                                  new_name=os.path.basename(reaches_featureclass).replace(".shp", ""))
                 layer.showLabels = True
-        arcpy.RefreshTOC()
+        if not arcgis_pro:
+            arcpy.RefreshTOC()
         # def addLayer(layer_source, source):
         #     layer = arcpy.mapping.Layer(layer_source)
         #     layer = arcpy.mapping.AddLayer(df, weirLayer, 'TOP')
