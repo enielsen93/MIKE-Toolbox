@@ -12,23 +12,23 @@ from scipy.optimize import bisect
 if len(sys.argv)>1:
     res1d_file = sys.argv[1]
 else:
-    # extension = "2"
+    extension = ""
     # MU_model = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Fredensvang\MIKE\FRE_005\FRE_005.sqlite"
     # res1d_file = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Fredensvang\MIKE\FRE_005\FRE_005_m1d - Result Files\FRE_005_CDS5_156_240_valideringBaseDefault_Network_HD.res1d"
-    # MU_model = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Hasle Torv\MIKE_URBAN\HAT_055\delete\HAT_055.sqlite"
-    res1d_file = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Hasle Torv\MIKE_URBAN\HAT_057\HAT_057_m1d - Result Files\HAT_057_CDS_5_132BaseDefault_Network_HD.res1d"
+    # MU_model = r"C:\Users\elnn\OyneDrive - Ramboll\Documents\Aarhus Vand\Hasle Torv\MIKE_URBAN\HAT_055\delete\HAT_055.sqlite"
+    res1d_file = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Jyllands Alle\MIKE_REGNVAND\JYL_072\JYL_072_m1d - Result Files\JYL_072_CDS_5_132_240_2080BaseResult_file.res1d"
 
 if not 'MU_model' in locals(): # Guessing where MIKE+ database is. Write path of MIKE-model above if not correct
     model_folder = os.path.dirname(os.path.dirname(res1d_file))
     MU_model = os.path.join(model_folder, os.path.basename(model_folder)) + ".sqlite"
     print(MU_model)
     if os.path.exists(MU_model):
-        print("Assuming MIKE+ database is %s" % (MU_model))
+        print("Assuming MIKE database is %s" % (MU_model))
     else:
         model_folder = os.path.dirname(res1d_file)
         MU_model = os.path.join(model_folder, os.path.basename(model_folder)) + ".mdb"
         if os.path.exists(MU_model):
-            print("Assuming MIKE+ database is %s" % (MU_model))
+            print("Assuming MIKE database is %s" % (MU_model))
         else:
             raise Exception("Did not find MIKE+ Database %s." % MU_model.replace(".sqlite", ".(sqlite|mdb)"))
 
@@ -290,6 +290,8 @@ elif MU_model and ".sqlite" in MU_model:
 print("Reading %s" % res1d_file)
 # queries = []
 
+extension = extension if 'extension' in locals() else ""
+
 def read_res1d():
     res1d = Res1D(res1d_file)
 
@@ -298,7 +300,9 @@ def read_res1d():
     for reach in [r for r in res1d.data.Reaches if r.Name.replace("Weir:","") in reaches]:
         muid = reach.Name.replace("Weir:","")
 
-        reaches[muid].shape = arcpy.Polyline(arcpy.Array([arcpy.Point(coordinate.X, coordinate.Y) for coordinate in reach.DigiPoints]))
+        # reaches[muid].shape = arcpy.Polyline(arcpy.Array([arcpy.Point(coordinate.X, coordinate.Y) for coordinate in reach.GridPoints]))
+        reaches[muid].shape = arcpy.Polyline(
+            arcpy.Array([arcpy.Point(coordinate.X, coordinate.Y) for coordinate in reach.GridPoints]))
         if filter_to_extent and not (reaches[muid].shape[0][0].X > filter_to_extent[0] and reaches[muid].shape[0][0].X < filter_to_extent[2]
                 and reaches[muid].shape[0][0].Y > filter_to_extent[1] and reaches[muid].shape[0][0].Y < filter_to_extent[3]):
             reaches[muid].skip = True
@@ -323,7 +327,6 @@ def read_res1d():
         else:
             return filepath
 
-    extension = extension if 'extension' in locals() else ""
 
     # nodes_new_filename = getAvailableFilename(os.path.join(output_folder, os.path.basename(res1d_file).replace(".res1d","_nodes%s.shp" % extension)))
     #
@@ -505,27 +508,30 @@ def read_res1d():
                     max_surcharge = None
                     surcharge = None
                     surcharge_balance = None
-                    if "DischargeToSurface" in res1d_quantities and any(["DischargeToSurface" in str(dataitem.Quantity) for dataitem in res1d.nodes[muid].DataItems]):
+                    if "DischargeToSurface" in res1d_quantities:# and any(["DischargeToSurface" in str(dataitem.Quantity) for dataitem in res1d.nodes[muid].DataItems]):
                         query = QueryDataNode("DischargeToSurface", muid)
                         try:
                             query_result = res1d.read(query)
-                            positive_surcharge = query_result.iloc[:, 0]
+                            positive_surcharge = query_result.iloc[:, 0].copy()
                             positive_surcharge[positive_surcharge<0] = 0
                             surcharge = np.trapz(positive_surcharge, timeseries)
                             surcharge_balance = np.trapz(query_result.iloc[:, 0], timeseries)
                             max_surcharge = np.max(query_result.iloc[:, 0])
-
                         except Exception as e:
                             print(e)
 
-                    if "DivertedRunoffToSurface" in res1d_quantities and any(
-                            ["DivertedRunoffToSurface" in str(dataitem.Quantity) for dataitem in res1d.nodes[muid].DataItems]):
+                    if "DivertedRunoffToSurface" in res1d_quantities:# and any(
+                        #["DivertedRunoffToSurface" in str(dataitem.Quantity) for dataitem in res1d.nodes[muid].DataItems]):
                         query = QueryDataNode("DivertedRunoffToSurface", muid)
                         try:
                             query_result = res1d.read(query)
                             diverted_runoff_to_surface = query_result.iloc[:, 0]
                             surcharge += np.trapz(diverted_runoff_to_surface, timeseries)
                             surcharge_balance += np.trapz(diverted_runoff_to_surface, timeseries)
+                            if muid == "D24102R":
+                                import matplotlib.pyplot as plt
+                                plt.plot(diverted_runoff_to_surface)
+                                print("BOB")
                             # if surcharge>0://
                             #     plt.plot(timeseries,query_result.iloc[:, 0])
                             # max_surcharge += np.trapz(query_result.iloc[:, 0], timeseries)
@@ -554,8 +560,6 @@ def read_res1d():
                                       surcharge or 0, surcharge_balance or 0, max_surcharge or 0, node.ground_level or 0])
                 bar()
 
-
-
     import winsound
     winsound.Beep(300, 200)
 
@@ -565,6 +569,12 @@ def read_res1d():
     if len([catchment for catchment in catchments.values() if not catchment.nodeid_exists])>0:
         print("%d catchments connected to missing node. ('%s')" % (len([catchment for catchment in catchments.values() if not catchment.nodeid_exists]),
                                                                    "', '".join([catchment.muid for catchment in catchments.values() if not catchment.nodeid_exists])))
+
+    # writing Last Modified time to the file
+    timestamp_file = os.path.join(gdb_path, "last_updated.txt")
+    import datetime
+    with open(timestamp_file, "w") as f:
+        f.write(f"Last update: {datetime.datetime.now().isoformat()}\n")
 
     print((nodes_new_filename, links_new_filename))
 
@@ -595,6 +605,6 @@ def read_res1d():
 while True:
     read_res1d()
     user_input = input("Run again? (y/n): ").strip().lower()
-    if user_input[0] == 'n':
+    if user_input and user_input[0] == 'n':
         print("Exiting...")
         break
