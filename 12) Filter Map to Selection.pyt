@@ -2,6 +2,16 @@ import os
 import numpy as np
 import re
 
+if "mapping" in dir(arcpy):
+    arcgis_pro = False
+    import arcpy.mapping as arcpymapping
+    from arcpy.mapping import MapDocument as arcpyMapDocument
+    from arcpy._mapping import Layer
+else:
+    arcgis_pro = True
+    import arcpy.mp as arcpymapping
+    from arcpy.mp import ArcGISProject as arcpyMapDocument
+
 class Toolbox(object):
     def __init__(self):
         self.label = "Set Definition Query to Selection"
@@ -24,7 +34,7 @@ class SetDefinitionQuery(object):
 
         layer = arcpy.Parameter(
             displayName="Layer",
-            name="folder",
+            name="layer",
             datatype="GPFeatureLayer",
             parameterType="Required",
             multiValue = True,
@@ -60,12 +70,27 @@ class SetDefinitionQuery(object):
 
     def updateParameters(self, parameters):
         if not parameters[0].Values:
-            mxd = arcpy.mapping.MapDocument("CURRENT")
+            if arcgis_pro:
+                # Reference the active map in the current project
+                aprx = arcpymapping.ArcGISProject("CURRENT")
+                map_view = aprx.activeMap
 
-            layers = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
-                     lyr.getSelectionSet()]
+                layers = []
+                # List layers with selected features
+                for layer in map_view.listLayers():
+                    try:
+                        if layer.getSelectionSet():
+                            layers.append(layer.longName)
+                    except:
+                        pass
+            else:
+                mxd = arcpy.mapping.MapDocument("CURRENT")
+
+                layers = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
+                         lyr.getSelectionSet()]
             if layers:
                 parameters[0].value = layers
+
 
         return
 
@@ -78,14 +103,36 @@ class SetDefinitionQuery(object):
         remove_selection = parameters[2].Value
         specific_definition_query = parameters[3].ValueAsText
 
+        def setDefinitionQuery(layer, definition_query):
+            if arcgis_pro:
+                aprx = arcpy.mp.ArcGISProject("CURRENT")
+                m = aprx.activeMap
+
+                layers = m.listLayers()
+                layer = [lyr for lyr in layers if lyr.name == layer.name and lyr.dataSource == layer.dataSource][0]
+
+
+                layer.updateDefinitionQueries([{"name": "Query 1", "sql": definition_query, "isActive":True}])
+                aprx.save()
+            else:
+                layer.definitionQuery = definition_query
+
         for layer in layers:
             if specific_definition_query: # specific definition query
                 old_definition_query = layer.definitionQuery
                 if old_definition_query and append:
                     old_definition_query = layer.definitionQuery
-                    layer.definitionQuery = old_definition_query + " AND " + specific_definition_query
+                    if arcgis_pro:
+                        setDefinitionQuery(layer, old_definition_query + " AND " + specific_definition_query)
+                    else:
+                        layer.definitionQuery = old_definition_query + " AND " + specific_definition_query
                 else:
-                    layer.definitionQuery = specific_definition_query
+                    if arcgis_pro:
+                        setDefinitionQuery(layer, specific_definition_query)
+                    else:
+                        layer.definitionQuery = specific_definition_query
+                # layer.updateDefinitionQueries([specific_definition_query])
+
             else:
                 oid_fieldname = arcpy.Describe(layer).OIDFieldName
                 # arcpy.AddMessage([row for row in arcpy.da.SearchCursor(layer, ["muid"], where_clause = "objectid IN (%s)" % (", ".join([str(l) for l in layer.getSelectionSet()])))])
