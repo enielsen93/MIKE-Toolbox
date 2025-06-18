@@ -8,12 +8,21 @@ import numpy as np
 import re
 from arcpy import env
 import requests
-import pythonaddins
+if "mapping" in dir(arcpy):
+    arcgis_pro = False
+    import arcpy.mapping as arcpymapping
+    from arcpy.mapping import MapDocument as arcpyMapDocument
+    from arcpy._mapping import Layer
+    import pythonaddins
+else:
+    arcgis_pro = True
+    import arcpy.mp as arcpymapping
+    from arcpy.mp import ArcGISProject as arcpyMapDocument
 import json
 import sqlite3
 
-callname = "QJXABWSWHV"
-hallpass = "Singapore77!"
+callname = "AUEZHLODEF"
+hallpass = "Berlin_1989"
 
 
 class Toolbox(object):
@@ -113,7 +122,7 @@ class GetTerrainElevation(object):
             if nodes:
                 parameters[0].value = nodes
 
-        if parameters[0].altered:
+        if parameters[0].altered and not parameters[2].value:
             parameters[2].filter.list = [f.name.lower() for f in arcpy.Describe(parameters[0].value).fields]
             if "GroundLevel".lower() in parameters[2].filter.list:
                 parameters[2].value = "GroundLevel"
@@ -168,6 +177,7 @@ class GetTerrainElevation(object):
                 url = (
                         r"https://services.datafordeler.dk/DHMTerraen/DHMKoter/1.0.0/GEOREST/HentKoter?format=json&username=%s&password=%s&geop=POINT(%1.2f%s%1.2f)" %
                         (user, passw, x, " ", y))
+                arcpy.AddMessage(url)
                 try:
                     return json.loads(requests.get(url, verify=False).text)['HentKoterRespons']["data"][0]["kote"]
                 except Exception as e:
@@ -177,9 +187,23 @@ class GetTerrainElevation(object):
                     arcpy.AddError(e.message)
 
         arcpy.SetProgressor("step", "Answer messagebox (might be hidden behind window)", 0, len(point_layer_shapes), 1)
-        userquery = pythonaddins.MessageBox("Assign terrain elevation to %d points?" % (len(point_layer_shapes)),
-                                            "Confirm Assignment", 4)
-        if userquery == "Yes":
+        if not arcgis_pro:
+            userquery = pythonaddins.MessageBox("Assign terrain elevation to %d points?" % (len(point_layer_shapes)),
+                                                "Confirm Assignment", 4)
+        else:
+            import tkinter as tk
+            from tkinter import messagebox
+
+            def confirm_assignment(num_points):
+                root = tk.Tk()
+                root.withdraw()  # Hide the main window
+                result = messagebox.askyesno("Confirm Assignment", f"Assign terrain elevation to {num_points} points?")
+                root.destroy()
+                return result
+
+            userquery = confirm_assignment(len(point_layer_shapes))
+
+        if userquery == "Yes" or (isinstance(userquery, bool) and userquery is True):
             arcpy.SetProgressor("step", "Getting terrain elevation of points", 0, len(point_layer_shapes), 1)
             if is_sqlite_database and 'msm_Node'.lower() in arcpy.Describe(point_layer).catalogPath.lower():
                 with sqlite3.connect(
@@ -190,7 +214,7 @@ class GetTerrainElevation(object):
                         terrain_elevation = round(getTerrainElevation(x,y), decimals)
                         update_cursor.execute(
                             "UPDATE msm_Node SET %s = %s WHERE MUID = '%s'" % (
-                            field, getTerrainElevation(x, y), muid))
+                            field, terrain_elevation, muid))
                         arcpy.AddMessage("Set %s to %1.2f" % (muid, terrain_elevation))
 
             else:
