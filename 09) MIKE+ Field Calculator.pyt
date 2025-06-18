@@ -7,7 +7,17 @@ import os
 import sys
 import numpy as np
 import sqlite3
-import pythonaddins
+
+if "mapping" in dir(arcpy):
+    arcgis_pro = False
+    import arcpy.mapping as arcpymapping
+    from arcpy.mapping import MapDocument as arcpyMapDocument
+    from arcpy._mapping import Layer
+    import pythonaddins
+else:
+    arcgis_pro = True
+    import arcpy.mp as arcpymapping
+    from arcpy.mp import ArcGISProject as arcpyMapDocument
 
 
 class Toolbox(object):
@@ -87,13 +97,28 @@ class FieldCalculator(object):
             arcpy.AddMessage(featureclass)
             selection = [row[0] for row in arcpy.da.SearchCursor(featureclass, ["muid"])]
             arcpy.AddMessage("Confirm Query - Might be hidden behind window!")
-            userquery = pythonaddins.MessageBox(
-                "Assign value to %d features?" % (len(selection)),
-                "Confirm Assignment", 4)
-            if len(selection)>100:
+            if arcgis_pro:
+                import tkinter as tk
+                from tkinter import messagebox
+
+                def confirm_assignment(num_features):
+                    root = tk.Tk()
+                    root.withdraw()  # Hide the main window
+                    result = messagebox.askyesno("Confirm Assignment", f"Assign value to {num_features} features?")
+                    root.destroy()
+                    return result
+
+                userquery = confirm_assignment(len(selection))
+                if userquery:
+                    userquery = "Yes"
+            else:
                 userquery = pythonaddins.MessageBox(
-                    "Are you sure? Assign value to %d features?" % (len(selection)),
+                    "Assign value to %d features?" % (len(selection)),
                     "Confirm Assignment", 4)
+                if len(selection)>100:
+                    userquery = pythonaddins.MessageBox(
+                        "Are you sure? Assign value to %d features?" % (len(selection)),
+                        "Confirm Assignment", 4)
             if userquery == "Yes":
                 arcpy.AddMessage(MU_database)
                 if ".sqlite" in MU_database:
