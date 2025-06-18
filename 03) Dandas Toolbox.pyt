@@ -17,7 +17,15 @@ import numpy as np
 import sys
 from collections import OrderedDict
 import traceback
-import pythonaddins
+if "mapping" in dir(arcpy):
+    arcgis_pro = False
+    import arcpy.mapping as arcpymapping
+    from arcpy.mapping import MapDocument as arcpyMapDocument
+    import pythonaddins
+else:
+    arcgis_pro = True
+    import arcpy.mp as arcpymapping
+    from arcpy.mp import ArcGISProject as arcpyMapDocument
 import time
 import sqlite3
 
@@ -34,6 +42,122 @@ def getAvailableFilename(filepath):
     else: 
         return filepath
 
+
+def confirm_assignment(txt, title = "Confirm", messagebox_typeno = 4, yes_return=None, no_return = None):
+    import tkinter as tk
+    from tkinter import messagebox
+
+    root = tk.Tk()
+    root.withdraw()  # Hide the main window
+    if messagebox_typeno == 1:
+        result = messagebox.askokcancel(title,txt)
+        no_return = "Cancel" if no_return is None else no_return
+        yes_return = "OK" if yes_return is None else yes_return
+    elif messagebox_typeno == 4:
+        result = messagebox.askyesno(title, txt)
+        no_return = "No" if no_return is None else no_return
+        yes_return = "Yes" if yes_return is None else yes_return
+    else:
+        result = messagebox.askyesno(title, txt)
+        no_return = "No" if no_return is None else no_return
+        yes_return = "Yes" if yes_return is None else yes_return
+    root.destroy()
+    if result:
+        return yes_return
+    else:
+        return no_return
+
+def addLayer(layer_source, source, group=None, workspace_type="ACCESS_WORKSPACE", new_name=None,
+             definition_query=None):
+    if arcgis_pro:
+        mxd = arcpy.mp.ArcGISProject("CURRENT")
+        df = mxd.listMaps()[0]
+    else:
+        mxd = arcpy.mapping.MapDocument("CURRENT")
+        df = arcpy.mapping.ListDataFrames(mxd)[0]
+    if arcgis_pro and not ".lyrx" in layer_source and os.path.exists(layer_source.replace(".lyr", ".lyrx")):
+        layer_source = layer_source.replace(".lyr", ".lyrx")
+    if source and ".sqlite" in source:
+        source_layer = arcpymapping.LayerFile(layer_source) if arcgis_pro else arcpy.mapping.Layer(source)
+
+        if group:
+            if arcgis_pro:
+                update_layer = df.addLayerToGroup(group, source_layer, "BOTTOM")
+            else:
+                arcpymapping.AddLayerToGroup(df, group, source_layer, "BOTTOM")
+        else:
+            if arcgis_pro:
+                update_layer = df.addLayer(source_layer, "TOP")
+            else:
+                arcpymapping.AddLayer(df, source_layer, "TOP")
+
+        if not arcgis_pro: update_layer = arcpymapping.listLayers(mxd, source_layer.name, df)[0] if arcgis_pro else \
+            arcpy.mapping.ListLayers(mxd, source_layer.name, df)[0]
+
+        if arcgis_pro:
+            new_connection_properties = update_layer.connectionProperties
+            new_connection_properties["workspace_factory"] = 'Sql'
+            new_connection_properties["connection_info"]["database"] = os.path.dirname(source)
+            update_layer.updateConnectionProperties()
+        else:
+            if ".sqlite" in source:
+                layer = arcpymapping.Layer(layer_source)
+                update_layer.visible = layer.visible
+                update_layer.labelClasses = layer.labelClasses
+                update_layer.showLabels = layer.showLabels
+                update_layer.name = layer.name
+                update_layer.definitionQuery = definition_query
+
+                try:
+                    arcpymapping.UpdateLayer(df, update_layer, layer, symbology_only=True)
+                except Exception as e:
+                    arcpy.AddWarning(source)
+                    pass
+            else:
+                update_layer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))),
+                                               workspace_type, os.path.basename(source))
+
+        try:
+            arcpymapping.UpdateLayer(df, update_layer, layer, symbology_only=True)
+        except Exception as e:
+            arcpy.AddWarning(source)
+            pass
+    else:
+        layer = arcpymapping.LayerFile(layer_source) if arcgis_pro else arcpymapping.Layer(layer_source)
+        if group:
+            if arcgis_pro:
+                df.addLayerToGroup(group, layer, "BOTTOM")
+            else:
+                arcpymapping.AddLayerToGroup(df, group, layer, "BOTTOM")
+        else:
+            if arcgis_pro:
+                df.addLayer(layer, "TOP")
+            else:
+                arcpymapping.AddLayer(df, layer, "TOP")
+        update_layer = df.listLayers(layer.listLayers()[0].name)[0] if arcgis_pro else \
+            arcpymapping.ListLayers(mxd, layer.name, df)[0]
+        if definition_query:
+            update_layer.definitionQuery = definition_query
+        if new_name:
+            update_layer.name = new_name
+
+        if source:
+            if arcgis_pro:
+                # CONFIRMED WORKING FOR SHAPEFILE -> FILEGDB
+                cp = update_layer.connectionProperties
+                if workspace_type == "FILEGDB_WORKSPACE":
+                    workspace_type = "File Geodatabase"
+                arcpy.AddMessage(workspace_type)
+                cp["connection_info"]['database'] = os.path.dirname(
+                    source.replace(r"\mu_Geometry", ""))  # output db path+name
+                cp['dataset'] = os.path.basename(source)
+                cp['workspace_factory'] = workspace_type
+                update_layer.updateConnectionProperties(update_layer.connectionProperties, cp)
+            else:
+                update_layer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))),
+                                               workspace_type, os.path.basename(source))
+    return update_layer
+
 class Toolbox(object):
     def __init__(self):
         """Define the toolbox (the name of the toolbox is the name of the
@@ -42,13 +166,17 @@ class Toolbox(object):
         self.alias = ""
 
         # List of tool classes associated with this toolbox
-        self.tools = [Dandas2MULinks, GPSManholes, DDS2ArcGISMU, DDS2ArcGISRK, DDS2Tilbudsliste, CopyMikeUrbanFeatures] # Dandas2ArcGIS
+        if arcgis_pro:
+            self.tools = [Dandas2MULinks, DDS2Tilbudsliste,
+                          CopyMikeUrbanFeatures]  # Dandas2ArcGIS
+        else:
+            self.tools = [Dandas2MULinks, GPSManholes, DDS2ArcGISMU, DDS2ArcGISRK, DDS2Tilbudsliste, CopyMikeUrbanFeatures] # Dandas2ArcGIS
          
 class Dandas2MULinks(object):
     def __init__(self):
         """Define the tool (tool name is the name of the class)."""
-        self.label = "1) Convert Dandas .XMLs to Mike Urban Features"
-        self.description = "1) Convert Dandas .XMLs to Mike Urban Features"
+        self.label = "1) Convert Dandas to MIKE Features (FileGDB)"
+        self.description = "1) Convert Dandas to MIKE Features (FileGDB)"
         self.canRunInBackground = False
 
     def getParameterInfo(self):
@@ -165,9 +293,14 @@ class Dandas2MULinks(object):
         import_catchments = parameters[6].Value
         ignore_elevation_difference = parameters[7].Value
 
-        mxd = arcpy.mapping.MapDocument("CURRENT")
-        df = arcpy.mapping.ListDataFrames(mxd)[0]
-        extent = df.extent
+        if arcgis_pro:
+            mxd = arcpy.mp.ArcGISProject("CURRENT")
+            df = mxd.listMaps()[0]
+            extent = df.defaultCamera.getExtent()
+        else:
+            mxd = arcpy.mapping.MapDocument("CURRENT")
+            df = arcpy.mapping.ListDataFrames(mxd)[0]
+            extent = df.extent
 
         MIKE_folder = os.path.join(os.path.dirname(arcpy.env.scratchGDB), "MIKE URBAN")
         if not os.path.exists(MIKE_folder):
@@ -189,19 +322,25 @@ class Dandas2MULinks(object):
         if afloebkategori is None:
             afloebkategori = []
         statusUpdate("Reading %s" % (os.path.basename(dandas_knuder)),tic)
-        with open(dandas_knuder,"r") as infile:
-            txt = infile.read()
-            txt = re.sub(r' xmlns="[^"]+"',"",txt)
+
+        if arcgis_pro:
+            with open(dandas_knuder, "r", encoding="utf-8") as infile:
+                txt = infile.read()
+        else:
+            with open(dandas_knuder, "r") as infile:
+                txt = infile.read()
+
+        txt = re.sub(r' xmlns="[^"]+"',"",txt)
         
         statusUpdate("Converting %s to XML Tree" % (os.path.basename(dandas_knuder)),tic)
         tree = ET.fromstring(txt)
-        
+
         nodes = tree.findall("Knude")
         
         statusUpdate("Creating manhole shapefile", tic)
         msm_Node = getAvailableFilename(arcpy.env.scratchGDB + "\msm_Node")
         arcpy.management.CreateFeatureclass(arcpy.env.scratchGDB, os.path.basename(msm_Node), geometry_type = "POINT", 
-                                            template = os.path.dirname(os.path.realpath(__file__)) + "\Data\Templates.mdb\msm_Node")
+                                            template = os.path.dirname(os.path.realpath(__file__)) + "\Data\Templates.gdb\msm_Node_Template")
                                             
         if coordinate_system:
             arcpy.DefineProjection_management(msm_Node, coordinate_system) 
@@ -209,7 +348,7 @@ class Dandas2MULinks(object):
         
         statusUpdate("Adding fields to manholes shapefile", tic)
         msm_Node_Template = OrderedDict()
-        templateFile = os.path.dirname(os.path.realpath(__file__)) + "\Data\Templates.mdb\msm_Node_Template"
+        templateFile = os.path.dirname(os.path.realpath(__file__)) + "\Data\Templates.gdb\msm_Node_Template"
         msm_Node_Fields = [a.name for a in arcpy.ListFields(templateFile) if a.name not in ["FID","Shape","SHAPE","OBJECTID"]]
         with arcpy.da.SearchCursor(templateFile,msm_Node_Fields) as cursor:
             for row in cursor:
@@ -308,7 +447,7 @@ class Dandas2MULinks(object):
                         msm_Node_Table["Description"] = "Ukendt" if not msm_Node_Table["Description"] else msm_Node_Table["Description"] + ", Ukendt"
                     if not skip:
                         
-                        msm_Node_Cursor.insertRow([(float(nodes[nodei].find("XKoordinat").text),float(nodes[nodei].find("YKoordinat").text))]+msm_Node_Table.values())
+                        msm_Node_Cursor.insertRow([(float(nodes[nodei].find("XKoordinat").text),float(nodes[nodei].find("YKoordinat").text))]+list(msm_Node_Table.values()))
                         nodesDict[nodes[nodei].attrib['Knudenavn']] = (float(nodes[nodei].find("XKoordinat").text),float(nodes[nodei].find("YKoordinat").text), msm_Node_Table["InvertLevel"])
                     ID = ID+1
             except Exception as e:
@@ -319,10 +458,10 @@ class Dandas2MULinks(object):
         if import_catchments:
             arcpy.SetProgressor("default","Reading Catchments")
             ms_Catchment = getAvailableFilename(arcpy.env.scratchGDB + "\ms_Catchment")
-            arcpy.CopyFeatures_management(os.path.dirname(os.path.realpath(__file__)) + "\Data\Templates.mdb\ms_Catchment", ms_Catchment)
+            arcpy.CopyFeatures_management(os.path.dirname(os.path.realpath(__file__)) + "\Data\Templates.gdb\ms_Catchment", ms_Catchment)
             if coordinate_system:
                 arcpy.DefineProjection_management(ms_Catchment, coordinate_system)
-            templateFile = os.path.dirname(os.path.realpath(__file__)) + "\Data\Templates.mdb\ms_Catchment_Template"
+            templateFile = os.path.dirname(os.path.realpath(__file__)) + "\Data\Templates.gdb\ms_Catchment_Template"
             ms_Catchment_Fields = [a.name for a in arcpy.ListFields(templateFile) if a.name not in ["FID","Shape","SHAPE","OBJECTID"]]
             ms_Catchment_Cursor = arcpy.da.InsertCursor(ms_Catchment, ["SHAPE@"] + ms_Catchment_Fields)
             ms_Catchment_Template = OrderedDict()
@@ -363,20 +502,24 @@ class Dandas2MULinks(object):
             del ms_Catchment_Cursor
                             
         if dandas_ledninger:
-            arcpy.SetProgressor("default","Reading links")    
-            with open(dandas_ledninger,"r") as infile:
-                txt = infile.read()
-                txt = re.sub(r' xmlns="[^"]+"',"",txt)
+            arcpy.SetProgressor("default","Reading links")
+            if arcgis_pro:
+                with open(dandas_ledninger, "r", encoding="utf-8") as infile:
+                    txt = infile.read()
+            else:
+                with open(dandas_ledninger, "r") as infile:
+                    txt = infile.read()
+            txt = re.sub(r' xmlns="[^"]+"',"",txt)
             
             tree = ET.fromstring(txt)
             
             links = tree.findall("Ledning")
             msm_Link = getAvailableFilename(arcpy.env.scratchGDB + "\msm_Link")
-            arcpy.CopyFeatures_management(os.path.dirname(os.path.realpath(__file__)) + "\Data\Templates.mdb\msm_Link", msm_Link)
+            arcpy.CopyFeatures_management(os.path.dirname(os.path.realpath(__file__)) + "\Data\Templates.gdb\msm_Link_Template", msm_Link)
             if coordinate_system:
                 arcpy.DefineProjection_management(msm_Link, coordinate_system) 
             msm_Link_Template = OrderedDict()
-            templateFile = os.path.dirname(os.path.realpath(__file__)) + "\Data\Templates.mdb\msm_Link_Template"
+            templateFile = os.path.dirname(os.path.realpath(__file__)) + "\Data\Templates.gdb\msm_Link_Template"
             fields = [a.name for a in arcpy.ListFields(templateFile) if a.name not in [u"FID",u"SHAPE",u"OBJECTID","SHAPE_Length"]]
 
             with arcpy.da.SearchCursor(templateFile,fields) as cursor:
@@ -492,7 +635,7 @@ class Dandas2MULinks(object):
                             pass
                         vertices.append(arcpy.Point(nodesDict[linkDictionary["TONODE"]][0],nodesDict[linkDictionary["TONODE"]][1]))
                         polyline = arcpy.Polyline(arcpy.Array(vertices))
-                        msm_Link_Cursor.insertRow([polyline]+linkDictionary.values())
+                        msm_Link_Cursor.insertRow([polyline]+list(linkDictionary.values()))
                         del linkDictionary["FROMNODE"]
                         del linkDictionary["TONODE"]
                     except Exception as e:
@@ -500,34 +643,39 @@ class Dandas2MULinks(object):
                         arcpy.AddWarning(traceback.format_exc())
                         pass
             del msm_Link_Cursor
-        
-        empty_group_mapped = arcpy.mapping.Layer(os.path.dirname(os.path.realpath(__file__)) + r"\Data\Dandas Import.lyr")
-        empty_group = arcpy.mapping.AddLayer(df, empty_group_mapped, "TOP")
-        empty_group_layer = arcpy.mapping.ListLayers(mxd, "Dandas Import", df)[0]
-        empty_group_layer.name = os.path.splitext(os.path.basename(dandas_knuder))[0]
-        if dandas_ledninger:
-            empty_group_layer.name = empty_group_layer.name + " " + os.path.splitext(os.path.basename(dandas_ledninger))[0]
+
+        if arcgis_pro:
+            # Load the .lyr file
+            layer_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), r"Data\Dandas Import.lyr")
+            addLayer(layer_path, source = None)
+            empty_group_layer = [lyr for lyr in df.listLayers() if lyr.name == "Dandas Import" and lyr.isGroupLayer][0]
+            empty_group_layer.name = os.path.splitext(os.path.basename(dandas_knuder))[0]
+        else:
+            empty_group_mapped = arcpy.mapping.Layer(os.path.dirname(os.path.realpath(__file__)) + r"\Data\Dandas Import.lyr")
+            empty_group = arcpy.mapping.AddLayer(df, empty_group_mapped, "TOP")
+            empty_group_layer = arcpy.mapping.ListLayers(mxd, "Dandas Import", df)[0]
+            empty_group_layer.name = os.path.splitext(os.path.basename(dandas_knuder))[0]
+            if dandas_ledninger:
+                empty_group_layer.name = empty_group_layer.name + " " + os.path.splitext(os.path.basename(dandas_ledninger))[0]
         # msm_Node_reprojected = arcpy.management.Project(msm_Node, 
                                                         # getAvailableFilename(arcpy.env.scratchGDB + "\msm_Node_reprojected"),
                                                         # arcpy.SpatialReference("ETRS 1989 UTM Zone 32N"),
                                                         # in_coor_system = coordinate_system)[0] if coordinate_system else msm_Node
                                                         
-        addLayer = arcpy.mapping.Layer(msm_Node)
-        arcpy.mapping.AddLayerToGroup(df, empty_group_layer, addLayer, "TOP")
-        updatelayer = arcpy.mapping.ListLayers(mxd, msm_Node.split("\\")[-1], df)[0]
-        
-        sourcelayer = arcpy.mapping.Layer(os.path.dirname(os.path.realpath(__file__)) + "\Data\msm_Node.lyr")
-        arcpy.mapping.UpdateLayer(df,updatelayer,sourcelayer,False)
-        updatelayer.replaceDataSource(unicode(addLayer.workspacePath), 'FILEGDB_WORKSPACE', unicode(addLayer.datasetName))
+
+        # arcpy.AddMessage((os.path.dirname(os.path.realpath(__file__)) + "\Data\msm_Node.lyr", msm_Node, empty_group_layer, 'FILEGDB_WORKSPACE'))
+        addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\msm_Node.lyr", msm_Node, empty_group_layer, 'FILEGDB_WORKSPACE')
         
         if dandas_ledninger:
-            addLayer = arcpy.mapping.Layer(msm_Link)
-            arcpy.mapping.AddLayerToGroup(df, empty_group_layer, addLayer, "BOTTOM")   
-            updatelayer = arcpy.mapping.ListLayers(mxd, msm_Link.split("\\")[-1], df)[0]
-            sourcelayer = arcpy.mapping.Layer(os.path.dirname(os.path.realpath(__file__)) + "\Data\msm_Link_DDS.lyr")
-            arcpy.mapping.UpdateLayer(df,updatelayer,sourcelayer,False)
-            updatelayer.replaceDataSource(unicode(addLayer.workspacePath), 'FILEGDB_WORKSPACE', unicode(addLayer.datasetName))
-           
+            # addLayer = arcpy.mapping.Layer(msm_Link)
+            # arcpy.mapping.AddLayerToGroup(df, empty_group_layer, addLayer, "BOTTOM")
+            # updatelayer = arcpy.mapping.ListLayers(mxd, msm_Link.split("\\")[-1], df)[0]
+            # sourcelayer = arcpy.mapping.Layer(os.path.dirname(os.path.realpath(__file__)) + "\Data\msm_Link_DDS.lyr")
+            # arcpy.mapping.UpdateLayer(df,updatelayer,sourcelayer,False)
+            # updatelayer.replaceDataSource(unicode(addLayer.workspacePath), 'FILEGDB_WORKSPACE', unicode(addLayer.datasetName))
+            addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\msm_Link_DDS.lyr", msm_Link, empty_group_layer,
+                     'FILEGDB_WORKSPACE')
+
                     
             links_with_faulty_uplevel = []
             links_with_faulty_dwlevel = []
@@ -541,12 +689,9 @@ class Dandas2MULinks(object):
             arcpy.AddMessage(links_with_faulty_dwlevel)
         
         if import_catchments:
-            addLayer = arcpy.mapping.Layer(ms_Catchment)
-            arcpy.mapping.AddLayerToGroup(df, empty_group_layer, addLayer, "BOTTOM")
-            updatelayer = arcpy.mapping.ListLayers(mxd, ms_Catchment.split("\\")[-1], df)[0]
-            sourcelayer = arcpy.mapping.Layer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MOUSE Catchments.lyr")
-            arcpy.mapping.UpdateLayer(df,updatelayer,sourcelayer,False)
-            updatelayer.replaceDataSource(unicode(addLayer.workspacePath), 'FILEGDB_WORKSPACE', unicode(addLayer.datasetName))
+            addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MOUSE Catchments.lyr", ms_Catchment,
+                     empty_group_layer,
+                     'FILEGDB_WORKSPACE')
         
         return
         
@@ -692,6 +837,7 @@ class DDS2Tilbudsliste(object):
                     return "%s-%s" % (pipe.tonode, pipe.fromnode)
 
         is_sqlite = True if ".sqlite" in arcpy.Describe(manhole_shapefile).catalogPath else False
+
         manholes = OrderedDict()
         with arcpy.da.SearchCursor(manhole_shapefile, ["MUID", "InvertLevel", "GroundLevel", "Diameter"], where_clause = "Description <> 'Stikledning' OR Description IS NULL") as cursor:
             for row in cursor:
@@ -709,11 +855,10 @@ class DDS2Tilbudsliste(object):
         pipes = OrderedDict(sorted(pipes.items(), key = lambda item: item[1].diameter))
         
         for manhole in manholes.values():
-            manhole.formatted_line = u"Broend %s, oe%1.0f mm plast%s" % (manhole.muid, manhole.diameter*1e3, manhole.getDepth())
+            manhole.formatted_line = u"Broend %s, oe%1.0f mm plast%s" % (manhole.muid, manhole.diameter*1e3 if manhole.diameter else 0, manhole.getDepth())
             
         for pipe in pipes.values():
             # if pipe.fromnode in all_manholes and pipe.tonode in all_manholes:
-            arcpy.AddMessage(pipe.depth(all_manholes))
             # pipe.formatted_line = u"\t\tStr. %s\toe%1.0f mm %s\tlbm\t%1.0f\t\t\t" % (pipe.getPipeName(), pipe.outer_diameter*1e3, "pl" if pipe.material == "Plastic" else "bt", pipe.length)
             pipe.formatted_line = u"Str. %s\t%1.0f\t%s\t%1.0f\t%1.1f" % (
                     pipe.getPipeName(), pipe.outer_diameter * 1e3, "pl" if pipe.material == "Plastic" else "bt", pipe.length, pipe.depth(all_manholes))
@@ -723,8 +868,6 @@ class DDS2Tilbudsliste(object):
         def getMaxLineno():
             return max(np.max([manhole.lineno for manhole in manholes.values()]), np.max([pipe.lineno for pipe in pipes.values()]))
 
-        arcpy.AddMessage(pipes)
-
         def listParents(manhole): # Recursive loop that travels upstream and assigns an object the next lineno 
              parent_pipes = [pipe for pipe in pipes.values() if pipe.tonode == manhole.muid if pipe.fromnode in manholes]
              for parent_pipe in parent_pipes:
@@ -733,13 +876,15 @@ class DDS2Tilbudsliste(object):
                  listParents(manholes[parent_pipe.fromnode])
         
         # Either start travelling from a manhole that has no pipes downstream
-        # for manhole in manholes.values():
-        #     if ([pipe.muid for pipe in pipes.values() if pipe.tonode == manhole.muid]  and not [pipe.muid for pipe in pipes.values() if pipe.fromnode == manhole.muid]):
-        #         manhole.lineno = getMaxLineno() + 1
-        #         listParents(manhole)
+        for manhole in manholes.values():
+            if ([pipe.muid for pipe in pipes.values() if pipe.tonode == manhole.muid]  and not [pipe.muid for pipe in pipes.values() if pipe.fromnode == manhole.muid]):
+                manhole.lineno = getMaxLineno() + 1
+                listParents(manhole)
         
         # or start travelling from a pipe ending at a pipe that is not selected in ArcMap
         for pipe in pipes.values():
+            arcpy.AddMessage(pipe.tonode)
+            arcpy.AddMessage(manholes)
             if pipe.tonode not in manholes and pipe.fromnode in manholes and pipe.lineno == -1:
                 pipe.lineno = getMaxLineno() + 1
                 manholes[pipe.fromnode].lineno = getMaxLineno() + 1
@@ -750,7 +895,7 @@ class DDS2Tilbudsliste(object):
                     arcpy.AddMessage(pipe.tonode)
                     arcpy.AddMessage(pipe.muid)
 
-        tender_text = u"bob" # all the text that should be copied/exported
+        tender_text = u"Tilbudsliste" # all the text that should be copied/exported
         if pipes_nodes_order == r"[Manhole]-[Pipe]-[Manhole]":
             for lineno in range(getMaxLineno()+1):
                 for line in [pipe.formatted_line for pipe in pipes.values() if pipe.lineno == lineno]:
@@ -765,7 +910,6 @@ class DDS2Tilbudsliste(object):
                 for line in [pipe.formatted_line for pipe in pipes.values() if pipe.lineno == lineno]:
                     tender_text += u"\n" + line
 
-        tender_text = tender_text[1:]
         arcpy.AddMessage(tender_text)
         
         # copying the tender text to the clipboard using the library tkinter
@@ -778,16 +922,27 @@ class DDS2Tilbudsliste(object):
         # r.clipboard_clear()
         import subprocess
         def copy2clip(txt):
-            # Convert da text to UTF-8 bytes (since Python 2.7 uses bytes natively)
-            if isinstance(txt, unicode):
-                txt = txt.encode('utf-8')
-            # Pipe da raw text directly into clip
-            process = subprocess.Popen(
-                'clip',
-                stdin=subprocess.PIPE,
-                shell=True
-            )
-            process.communicate(input=txt)  # Send da UTF-8 encoded bytes
+            if arcgis_pro:
+                # In Python 3, txt is a str (unicode)
+                # We can pass text directly with text=True
+                process = subprocess.Popen(
+                    'clip',
+                    stdin=subprocess.PIPE,
+                    shell=True,
+                    text=True  # <-- lets communicate accept str and encode automatically
+                )
+                process.communicate(input=txt)
+            else:
+                # Convert da text to UTF-8 bytes (since Python 2.7 uses bytes natively)
+                if isinstance(txt, unicode):
+                    txt = txt.encode('utf-8')
+                # Pipe da raw text directly into clip
+                process = subprocess.Popen(
+                    'clip',
+                    stdin=subprocess.PIPE,
+                    shell=True
+                )
+                process.communicate(input=txt)  # Send da UTF-8 encoded bytes
 
         # Example usage (with Unicode string)
         # tender_text = u"Dette er en test med æ, ø, og å"
@@ -805,8 +960,8 @@ class DDS2Tilbudsliste(object):
 class CopyMikeUrbanFeatures(object):
     def __init__(self):
         """Define the tool (tool name is the name of the class)."""
-        self.label = "2) Copy Mike Urban Features to Mike Urban Database"
-        self.description = "2) Copy Mike Urban Features to Mike Urban Database"
+        self.label = "2) Copy Features to MIKE Database (FileGDB / MIKE → MIKE)"
+        self.description = "2) Copy Features to MIKE Database (FileGDB / MIKE → MIKE)"
         self.canRunInBackground = False
 
     def getParameterInfo(self):
@@ -872,29 +1027,57 @@ class CopyMikeUrbanFeatures(object):
         #  input dataset yet, or the user has set a specific distance (Altered is true).
         #
         if not parameters[1].value and not parameters[2].value and not parameters[3].value:
-            mxd = arcpy.mapping.MapDocument("CURRENT")
+            if arcgis_pro:
+                aprx = arcpymapping.ArcGISProject("CURRENT")
+                map_view = aprx.activeMap
+                for layer in map_view.listLayers():
+                    if layer.isFeatureLayer:
+                        try:
+                            description = arcpy.Describe(layer)
+                            if layer.getSelectionSet() and description.shapeType == "Point" and "muid" in [field.name.lower() for field in arcpy.ListFields(description.catalogPath)]:
+                                parameters[1].value = layer.longName
+                                continue
+                            if layer.getSelectionSet() and description.shapeType == "Polyline" and "muid" in [field.name.lower() for field in arcpy.ListFields(description.catalogPath)]:
+                                parameters[2].value = layer.longName
+                                continue
+                            if layer.getSelectionSet() and description.shapeType == "Polygon" and "muid" in [field.name.lower() for field in arcpy.ListFields(description.catalogPath)]:
+                                parameters[3].value = layer.longName
+                                continue
+                        except Exception as e:
+                            pass
+            else:
+                mxd = arcpy.mapping.MapDocument("CURRENT")
 
-            nodes = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Point'
-                    and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)]]
-            if nodes:
-                parameters[1].value = nodes[0]
-
-            links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
-                    and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)]]
-            if links:
-                parameters[2].value = links[0]
-
-            catchments = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polygon'
+                nodes = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Point'
                         and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)]]
-            if catchments:
-                parameters[3].value = catchments[0]
+                if nodes:
+                    parameters[1].value = nodes[0]
+
+                links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
+                         lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
+                         and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)]]
+                if links:
+                    parameters[2].value = links[0]
+
+
+                catchments = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polygon'
+                            and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)]]
+                if catchments:
+                    parameters[3].value = catchments[0]
 
         if not parameters[0].valueAsText:
-            mxd = arcpy.mapping.MapDocument("CURRENT")
-            database = [lyr.dataSource for lyr in arcpy.mapping.ListLayers(mxd) if not lyr.getSelectionSet() and lyr.isFeatureLayer and ".mdb" in lyr.dataSource]
+            if arcgis_pro:
+                aprx = arcpymapping.ArcGISProject("CURRENT")
+                map_view = aprx.activeMap
+                database = [lyr.dataSource for lyr in map_view.listLayers() if lyr.isFeatureLayer and
+                            not lyr.getSelectionSet() and (".mdb" in lyr.dataSource or ".sqlite" in lyr.dataSource)]
+            else:
+                mxd = arcpy.mapping.MapDocument("CURRENT")
+                database = [lyr.dataSource for lyr in arcpy.mapping.ListLayers(mxd) if not lyr.getSelectionSet() and lyr.isFeatureLayer and ".mdb" in lyr.dataSource]
+
             if database:
                 database = re.findall(r".+\.(?:mdb|sqlite)", database[0], re.IGNORECASE)[0]
-                parameters[0].value = database
+                parameters[0].value = database.replace("Instance=","")
 
         if parameters[0].value and ".sqlite" in parameters[0].valueAsText:
             parameters[4].enabled = True
@@ -907,7 +1090,7 @@ class CopyMikeUrbanFeatures(object):
         #     is_sqlite = True if ".sqlite" in MU_database else False
         #     if is_sqlite:
         #         parameters[3].enabled = False
-            
+
         return
 
     def updateMessages(self, parameters):
@@ -973,8 +1156,12 @@ class CopyMikeUrbanFeatures(object):
                 enabled_lineno = [i for i, line in enumerate(xml_txt) if 'property="msm_Link" value=' in line][0]
                 xml_txt[enabled_lineno] = re.sub('value *= *"[^"]+"', 'value="False"', xml_txt[enabled_lineno])
 
-        if pythonaddins.MessageBox("You are copying %d manholes, %d pipes, and %d catchments. Continue?" % (nodes_count, links_count, catchments_count),
-                                   "Confirm copy?", 1) == "OK":
+        if arcgis_pro:
+            userquery = confirm_assignment("You are copying %d manholes, %d pipes, and %d catchments. Continue?" % (nodes_count, links_count, catchments_count), "Confirm copy?", 1)
+        else:
+            userquery = pythonaddins.MessageBox("You are copying %d manholes, %d pipes, and %d catchments. Continue?" % (nodes_count, links_count, catchments_count),
+                                       "Confirm copy?", 1)
+        if userquery == "OK":
             if msm_Node:
                 reference_MU_database = os.path.dirname(arcpy.Describe(msm_Node).catalogPath)
                 nodes_in_database = [row[0] for row in arcpy.da.SearchCursor(MU_database + "\msm_Node", ["MUID"])]
@@ -983,16 +1170,23 @@ class CopyMikeUrbanFeatures(object):
                 duplicate_nodes = np.intersect1d(nodes_in_database, nodes_in_msm_Node)
                 if duplicate_nodes.size > 0:
                     if is_sqlite:
-                        response = pythonaddins.MessageBox(
-                            "The following manholes are already in the MIKE+ Database: %s" % ", ".join(
-                                duplicate_nodes), "Confirm?", 1)
+                        if arcgis_pro:
+                            response = confirm_assignment("The following manholes are already in the MIKE+ Database: %s" % ", ".join(
+                                    duplicate_nodes), 1, "Confirm?")
+                        else:
+                            response = pythonaddins.MessageBox(
+                                "The following manholes are already in the MIKE+ Database: %s" % ", ".join(
+                                    duplicate_nodes), "Confirm?", 1)
                         if response == "Cancel":
                             return
                     else:
-                        response = pythonaddins.MessageBox("The following manholes are already in the Mike Urban Database: %s" % ", ".join(duplicate_nodes)
-                                                       + " Would you like to remove the existing manholes first? (No: The tool will add those duplicate manholes anyway."
-                                                       + " Cancel: Skip those manholes)",
-                                                       "Remove duplicate features?", 3)
+                        if arcgis_pro:
+                            confirm_assignment("The following manholes are already in the Mike Urban Database: %s. Would you like to continue?" % ", ".join(duplicate_nodes), 1)
+                        else:
+                            response = pythonaddins.MessageBox("The following manholes are already in the Mike Urban Database: %s" % ", ".join(duplicate_nodes)
+                                                           + " Would you like to remove the existing manholes first? (No: The tool will add those duplicate manholes anyway."
+                                                           + " Cancel: Skip those manholes)",
+                                                           "Remove duplicate features?", 3)
                         if response == "Yes":
                             edit = arcpy.da.Editor(MU_database)
                             edit.startEditing(False, True)
@@ -1011,8 +1205,15 @@ class CopyMikeUrbanFeatures(object):
 
                     source_lineno = \
                         [i for i, line in enumerate(xml_txt) if '<JobPropertyValue property="Source"' in line][0]
-                    xml_txt[source_lineno] = re.sub('value *= *"[^"]+"', 'value="%s"' % reference_MU_database,
-                                                    xml_txt[source_lineno])
+
+                    try:
+                        xml_txt[source_lineno] = re.sub('value *= *"[^"]+"', 'value="%s"' % reference_MU_database.replace("\\",r"\\"),
+                                                        xml_txt[source_lineno])
+                    except Exception as e:
+                        arcpy.AddMessage('value *= *"[^"]+"')
+                        arcpy.AddMessage('value="%s"' % reference_MU_database)
+                        arcpy.AddMessage(xml_txt[source_lineno])
+                        raise(e)
 
                     msm_Node_where_clause_lineno = [i for i, line in enumerate(xml_txt) if '"msm_Node_where_clause"' in line][0]
                     xml_txt[msm_Node_where_clause_lineno] = re.sub('value *= *"[^"]+"', "value=\"MUID IN ('%s')\"" % "', '".join(MUIDs),
@@ -1035,9 +1236,13 @@ class CopyMikeUrbanFeatures(object):
                 duplicate_links = np.intersect1d(links_in_database, links_in_msm_Link)
                 if duplicate_links.size > 0:
                     if is_sqlite:
-                        response = pythonaddins.MessageBox(
-                            "The following links are already in the MIKE+ Database: %s" % ", ".join(
-                                duplicate_links), "Confirm?", 1)
+                        if arcgis_pro:
+                            confirm_assignment("The following links are already in the MIKE+ Database: %s" % ", ".join(
+                                    duplicate_links), "Confirm?", no_return = "Cancel")
+                        else:
+                            response = pythonaddins.MessageBox(
+                                "The following links are already in the MIKE+ Database: %s" % ", ".join(
+                                    duplicate_links), "Confirm?", 1)
                         if response == "Cancel":
                             return
                     else:
@@ -1059,7 +1264,7 @@ class CopyMikeUrbanFeatures(object):
                 if is_sqlite:
                     MUIDs = links_in_msm_Link
                     source_lineno = [i for i,line in enumerate(xml_txt) if '<JobPropertyValue property="Source"' in line][0]
-                    xml_txt[source_lineno] = re.sub('value *= *"[^"]+"', 'value="%s"' % reference_MU_database, xml_txt[source_lineno])
+                    xml_txt[source_lineno] = re.sub('value *= *"[^"]+"', 'value="%s"' % reference_MU_database.replace("\\", r"\\"), xml_txt[source_lineno])
 
                     msm_Link_where_clause_lineno = \
                         [i for i, line in enumerate(xml_txt) if '"msm_Link_where_clause"' in line][0]
@@ -1111,7 +1316,7 @@ class CopyMikeUrbanFeatures(object):
                     reference_MU_database = os.path.dirname(arcpy.Describe(ms_Catchment).catalogPath)
                     source_lineno = \
                     [i for i, line in enumerate(xml_txt) if '<JobPropertyValue property="Source"' in line][0]
-                    xml_txt[source_lineno] = re.sub('value *= *"[^"]+"', 'value="%s"' % reference_MU_database,
+                    xml_txt[source_lineno] = re.sub('value *= *"[^"]+"', 'value="%s"' % reference_MU_database.replace("\\", r"\\"),
                                                     xml_txt[source_lineno])
 
 
@@ -1160,29 +1365,35 @@ class CopyMikeUrbanFeatures(object):
                                 errorMessage += "Catchments with MUID ('%s') already exist in Catchment Connections (msm_CatchCon) in Mike Urban Database" % ("(', '".join(duplicateCatchCon))
                             if errorMessage:
                                 arcpy.AddWarning(errorMessage)
-                            if not errorMessage or pythonaddins.MessageBox("%s\nTransfer catchments anyway?" % (errorMessage), "Confirm Transfer", 1) == "OK":
-                                arcpy.Append_management(selected, os.path.join(MU_database,"ms_Catchment"), schema_type = "NO_TEST")
-                                fields = [field.name.lower() for field in arcpy.ListFields(selected)]
-                                def readField(field):
-                                    if field.lower() in fields:
-                                        return field
-                                    else:
-                                        return "SHAPE@XY"
-                                with arcpy.da.SearchCursor(selected,["MUID","ImpArea","NodeID", readField("ParAID"), readField("RedFactor"), readField("ConcTime"), readField("InitLoss")]) as catchmentCursor:
-                                    with arcpy.da.InsertCursor(os.path.join(MU_database,"msm_CatchCon"),["CatchID","NodeID","TypeNo"]) as cursor:
-                                        for row in catchmentCursor:
-                                            nID = 0 if not row[2] else row[2]
-                                            cursor.insertRow((row[0],nID,1))
-                                    catchmentCursor.reset()
-                                    with arcpy.da.InsertCursor(os.path.join(MU_database,"msm_HModA"),["CatchID","ImpArea","ParAID","LocalNo","ConcTime","RFactor","ILoss","CoeffNo","TACoeff"]) as cursor:
-                                        for row in catchmentCursor:
-                                            iArea = 0 if not row[1] else row[1]
-                                            cursor.insertRow((row[0],iArea,"-DEFAULT-" if not row[3] or type(row[3]) is tuple else row[3],
-                                                              0,
-                                                              7 if not row[5] or type(row[5]) is tuple else row[5],
-                                                              0.9 if not row[4] or type(row[4]) is tuple else row[4],
-                                                              0.0006 if not row[6] or type(row[6]) is tuple else row[6],
-                                                              0,0.33))
+                            if not errorMessage:
+                                if arcgis_pro:
+                                    userquery = confirm_assignment("%s\nTransfer catchments anyway?" % (errorMessage), "Confirm Transfer", yes_return = "OK")
+                                else:
+                                    userquery = pythonaddins.MessageBox("%s\nTransfer catchments anyway?" % (errorMessage), "Confirm Transfer", 1)
+
+                                if userquery == "OK":
+                                    arcpy.Append_management(selected, os.path.join(MU_database,"ms_Catchment"), schema_type = "NO_TEST")
+                                    fields = [field.name.lower() for field in arcpy.ListFields(selected)]
+                                    def readField(field):
+                                        if field.lower() in fields:
+                                            return field
+                                        else:
+                                            return "SHAPE@XY"
+                                    with arcpy.da.SearchCursor(selected,["MUID","ImpArea","NodeID", readField("ParAID"), readField("RedFactor"), readField("ConcTime"), readField("InitLoss")]) as catchmentCursor:
+                                        with arcpy.da.InsertCursor(os.path.join(MU_database,"msm_CatchCon"),["CatchID","NodeID","TypeNo"]) as cursor:
+                                            for row in catchmentCursor:
+                                                nID = 0 if not row[2] else row[2]
+                                                cursor.insertRow((row[0],nID,1))
+                                        catchmentCursor.reset()
+                                        with arcpy.da.InsertCursor(os.path.join(MU_database,"msm_HModA"),["CatchID","ImpArea","ParAID","LocalNo","ConcTime","RFactor","ILoss","CoeffNo","TACoeff"]) as cursor:
+                                            for row in catchmentCursor:
+                                                iArea = 0 if not row[1] else row[1]
+                                                cursor.insertRow((row[0],iArea,"-DEFAULT-" if not row[3] or type(row[3]) is tuple else row[3],
+                                                                  0,
+                                                                  7 if not row[5] or type(row[5]) is tuple else row[5],
+                                                                  0.9 if not row[4] or type(row[4]) is tuple else row[4],
+                                                                  0.0006 if not row[6] or type(row[6]) is tuple else row[6],
+                                                                  0,0.33))
                         else:
                             input_database = arcpy.Describe(ms_Catchment).catalogPath.split(".mdb")[0] + ".mdb"
                             selected = arcpy.Select_analysis(ms_Catchment, "in_memory\ms_Catchment")
@@ -1295,12 +1506,14 @@ class GPSManholes(object):
             journal.append(row[1])
             journalkode.append(row[2])
 
-        
-        
-        with open(parameters[0].ValueAsText,"r") as infile:
-            txt = infile.read()
-            txt = re.sub(r' xmlns="[^"]+"',"",txt)
-        
+        if arcgis_pro:
+            with open(parameters[0].ValueAsText,"r", encoding="utf-8") as infile:
+                txt = infile.read()
+        else:
+            with open(parameters[0].ValueAsText,"r") as infile:
+                txt = infile.read()
+
+        txt = re.sub(r' xmlns="[^"]+"', "", txt)
         tree = ET.fromstring(txt)
         
         nodes = tree.findall("Knude")
@@ -1476,10 +1689,15 @@ class DDS2ArcGISRK(object):
         return
 
     def execute(self, parameters, messages):
-        with open(parameters[0].ValueAsText,"r") as infile:
-            txt = infile.read()
-            txt = re.sub(r' xmlns="[^"]+"',"",txt)
-        
+        if arcgis_pro:
+            with open(parameters[0].ValueAsText, "r", encoding="utf-8") as infile:
+                txt = infile.read()
+        else:
+            with open(parameters[0].ValueAsText, "r") as infile:
+                txt = infile.read()
+
+        txt = re.sub(r' xmlns="[^"]+"', "", txt)
+
         tree = ET.fromstring(txt)
         
         nodes = tree.findall("Knude")
@@ -1612,9 +1830,14 @@ class DDS2ArcGISMU(object):
         return
 
     def execute(self, parameters, messages):
-        with open(parameters[0].ValueAsText,"r") as infile:
-            txt = infile.read()
-            txt = re.sub(r' xmlns="[^"]+"',"",txt)
+        if arcgis_pro:
+            with open(parameters[0].ValueAsText, "r", encoding="utf-8") as infile:
+                txt = infile.read()
+        else:
+            with open(parameters[0].ValueAsText, "r") as infile:
+                txt = infile.read()
+
+        txt = re.sub(r' xmlns="[^"]+"', "", txt)
         
         tree = ET.fromstring(txt)
         
