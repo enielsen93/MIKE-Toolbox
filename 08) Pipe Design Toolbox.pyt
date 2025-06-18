@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Created on Mon Jul 30 11:21:31 2018
 
@@ -17,7 +18,19 @@ import networker
 import pandas as pd
 import traceback
 import datetime
-import pythonaddins
+if "mapping" in dir(arcpy):
+    arcgis_pro = False
+    import arcpy.mapping as arcpymapping
+    from arcpy.mapping import MapDocument as arcpyMapDocument
+    import pythonaddins
+else:
+    arcgis_pro = True
+    import arcpy.mp as arcpymapping
+    from arcpy.mp import ArcGISProject as arcpyMapDocument
+
+import importlib.util
+mikeio1d_installed = importlib.util.find_spec("mikeio1d") is not None
+
 import mikegraph
 import sqlite3
 import timearea
@@ -28,11 +41,9 @@ import configparser
 if "mapping" in dir(arcpy):
     import arcpy.mapping as apmapping
     from arcpy.mapping import MapDocument as MapDocument
-    from arcpy.mapping import MapDocument as MapDocument
 else:
     import arcpy.mp as apmapping
     from arcpy.mp import ArcGISProject as MapDocument
-    from arcpy.mapping import MapDocument as MapDocument
 
 diameters_plastic = [188, 235, 297, 377, 493, 588, 781, 985, 1185, 1385, 1485, 1585, 2000, 2200, 2400, 2600, 2800, 3000]
 diameters_concrete = [200, 300, 400, 500, 600, 700, 800, 900, 1000, 1200, 1400, 1600, 1800, 2000, 2250, 2500, 3000, 3500]
@@ -90,18 +101,42 @@ class Config:
 
         return parameters_dict
 
+def confirm_assignment(txt, title = "Confirm", messagebox_typeno = 4, yes_return=None, no_return = None):
+    import tkinter as tk
+    from tkinter import messagebox
+
+    root = tk.Tk()
+    root.withdraw()  # Hide the main window
+    if messagebox_typeno == 1:
+        result = messagebox.askokcancel(title,txt)
+        no_return = "Cancel" if no_return is None else no_return
+        yes_return = "OK" if yes_return is None else yes_return
+    elif messagebox_typeno == 4:
+        result = messagebox.askyesno(title, txt)
+        no_return = "No" if no_return is None else no_return
+        yes_return = "Yes" if yes_return is None else yes_return
+    else:
+        result = messagebox.askyesno(title, txt)
+        no_return = "No" if no_return is None else no_return
+        yes_return = "Yes" if yes_return is None else yes_return
+    root.destroy()
+    if result:
+        return yes_return
+    else:
+        return no_return
+
 class Toolbox(object):
     def __init__(self):
         self.label =  "Pipe Dimension Tool"
         self.alias  = "Pipe Dimension Tool"
         self.canRunInBackground = True
         # List of tool classes associated with this toolbox
-        self.tools = [PipeDimensionToolTAPro, upgradeDimensions, downgradeDimensions, setOutletLoss, reverseChange, InterpolateInvertLevels, GetMinimumSlope, CopyDiameter, CalculateSlopeOfPipe, ResetUpLevelDwlevel, SetDischargeRegulation, PipeDimensionToolResultFile, AnalyzeCatchmentArea]
+        self.tools = [PipeDimensionToolTAPro, upgradeDimensions, downgradeDimensions, setOutletLoss, reverseChange, InterpolateInvertLevels, GetMinimumSlope, CopyDiameter, CalculateSlopeOfPipe, ResetUpLevelDwlevel, SetDischargeRegulation, PipeDimensionToolResultFile, AnalyzeCatchmentArea, DrawLongitudinalProfiles, DrawClash]
 
 class PipeDimensionToolTAPro(object):
     def __init__(self):
-        self.label       = "1a) Calculate minimum required pipe diameter through Time Area Method"
-        self.description = "1a) Calculate minimum required pipe diameter through Time Area Method"
+        self.label       = "1a) Automated Pipe Sizing | Time-Area Method"
+        self.description = "1a) Automated Pipe Sizing | Time-Area Method"
         self.canRunInBackground = False
 
     def getParameterInfo(self):
@@ -183,12 +218,15 @@ class PipeDimensionToolTAPro(object):
         writeDFS0.category = "Additional settings"
 
         runoff_file = arcpy.Parameter(
-            displayName="Runoff rain event in ASCII Format",
+            displayName="Runoff rain event in ASCII or DFS0" if mikeio1d_installed else "Runoff rain event in ASCII",
             name="runoff",
             datatype="file",
             parameterType="Required",
             direction="Input")
-        runoff_file.filter.list = ["txt","km2","kmd","csv"]
+        if mikeio1d_installed:
+            runoff_file.filter.list = ["txt","km2","kmd","csv", "dfs0"]
+        else:
+            runoff_file.filter.list = ["txt", "km2", "kmd", "csv"]
 
         keep_largest_diameter = arcpy.Parameter(
             displayName="Only change diameter if it's greater than existing",
@@ -230,26 +268,44 @@ class PipeDimensionToolTAPro(object):
         return True
 
     def updateParameters(self, parameters): #optional
-        pipe_layer = parameters[0].ValueAsText
-        runoff_file = parameters[3].ValueAsText
+        pipe_layer = parameters[0]
+        runoff_file = parameters[3]
+        scaling_factor = parameters[4]
 
-        mxd = arcpy.mapping.MapDocument("CURRENT")
-        if not pipe_layer:
-            links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
-                 lyr.getSelectionSet() and "uplevel" in [field.name.lower() for field in arcpy.ListFields(lyr)]
-                 and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)] and (
-                             "sqlite" in arcpy.Describe(lyr).catalogPath or "mdb" in arcpy.Describe(lyr).catalogPath)
-                 and lyr.visible]
+        if arcgis_pro:
+            # Reference the active map in the current project
+            aprx = arcpymapping.ArcGISProject("CURRENT")
+            map_view = aprx.activeMap
 
-            if links:
-                parameters[0].value = links[0]
+            if not pipe_layer.value:
+                # List layers with selected features
+                layers = None
+                for layer in map_view.listLayers():
+                    try:
+                        if layer.getSelectionSet() and arcpy.Describe(layer).shapeType == "Polyline":
+                            parameters[0].value = layer.longName
+                            break
+                    except:
+                        pass
+        else:
+            mxd = arcpy.mapping.MapDocument("CURRENT")
+            if not pipe_layer.value:
+                links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
+                     lyr.getSelectionSet() and "uplevel" in [field.name.lower() for field in arcpy.ListFields(lyr)]
+                     and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)] and (
+                                 "sqlite" in arcpy.Describe(lyr).catalogPath or "mdb" in arcpy.Describe(lyr).catalogPath)
+                     and lyr.visible]
 
-        if pipe_layer:
-            parameters[2].filter.list = [f.name for f in arcpy.ListFields(pipe_layer)]
+                if links:
+                    parameters[0].value = links[0]
+
+        if pipe_layer.value:
+            parameters[2].filter.list = [f.name for f in arcpy.ListFields(pipe_layer.ValueAsText)]
             parameters[2].Value = "Diameter" if "diameter" in [field.lower() for field in parameters[2].filter.list] else parameters[2].Value
 
-        if pipe_layer and not runoff_file:
-            MU_database = os.path.dirname(arcpy.Describe(pipe_layer).catalogPath).replace("\mu_Geometry", "")
+
+        if pipe_layer.ValueAsText and not runoff_file.value:
+            MU_database = os.path.dirname(arcpy.Describe(pipe_layer.ValueAsText).catalogPath).replace("\mu_Geometry", "")
             MIKE_folder = os.path.join(os.path.dirname(arcpy.env.scratchGDB), "MIKE URBAN")
             config_folder = os.path.join(MIKE_folder, "Config")
             config_file = os.path.join(config_folder, os.path.splitext(os.path.basename(MU_database))[0] + ".ini")
@@ -263,6 +319,24 @@ class PipeDimensionToolTAPro(object):
                         parameters[i] = parameters_dict[config_parameter]
                     except Exception as e:
                         pass
+
+            if arcgis_pro and mikeio1d_installed:
+                table_path = MU_database + r"\msm_BBoundary"
+                fields = ["muid", "applyboundaryno", "fraction", "variationno", "tsconnection"]
+
+                with arcpy.da.SearchCursor(table_path, fields) as cursor:
+                    for row in cursor:
+                        id, applyboundaryno, fraction, variationno, tsconnection = row
+                        # Do your thing with the variables
+                        if applyboundaryno and variationno == 3:
+                            scaling_factor.value = fraction
+
+                            runoff_file.Value = os.path.abspath(os.path.join(os.path.dirname(MU_database), tsconnection))
+                            break
+
+
+
+
         return
 
     def updateMessages(self, parameters): #optional
@@ -309,8 +383,13 @@ class PipeDimensionToolTAPro(object):
         arcpy.SetProgressorLabel("Preparing")
         selected_pipes = [row[0] for row in arcpy.da.SearchCursor(pipe_layer, ["muid"])]
 
-        mxd = arcpy.mapping.MapDocument("CURRENT")
-        df = arcpy.mapping.ListDataFrames(mxd)[0]
+        if arcgis_pro:
+            mxd = arcpy.mp.ArcGISProject("CURRENT")
+            df = mxd.listMaps()[0]
+        else:
+            mxd = arcpy.mapping.MapDocument("CURRENT")
+            df = arcpy.mapping.ListDataFrames(mxd)[0]
+
 
         def addLayer(layer_source, source, group=None, workspace_type="ACCESS_WORKSPACE"):
             layer = apmapping.Layer(layer_source)
@@ -449,7 +528,7 @@ class PipeDimensionToolTAPro(object):
                                                 "enabled"],
                                                where_clause="MUID IN ('%s')" % ("','".join(selected_pipes))) as cursor:
                         for row_i, row in enumerate(cursor):
-                            # diameter_old = row[4]
+                            diameter_old = row[4]
                             arcpy.SetProgressorPosition(row_i)
                             if change_material:
                                 D = [diameter for diameter in diameters_plastic if diameter < 450] + [
@@ -517,6 +596,7 @@ class PipeDimensionToolTAPro(object):
                                            where_clause="MUID IN ('%s')" % ("','".join(selected_pipes))) as cursor:
                     for row_i, row in enumerate(cursor):
                         arcpy.SetProgressorPosition(row_i)
+                        old_material = row[2]
                         if change_material:
                             D = [diameter for diameter in diameters_plastic if diameter < 450] + [
                                 diameter for diameter in diameters_concrete if diameter > 450]
@@ -545,7 +625,16 @@ class PipeDimensionToolTAPro(object):
                         else:
                             if change_material:
                                 material = "Concrete (Normal)" if diameter > 0.45 else "Plastic"
-                            arcpy.AddMessage("Changed %s from %d to %d" % (row[3], row[1] * 1e3 if row[1] else 0, D[Di]))
+                            def materialName(material_id):
+                                if "pl" in material_id.lower():
+                                    material_name = "pl"
+                                elif "concrete" in material_id.lower():
+                                    material_name = "bt"
+                                else:
+                                    material_name = ""
+                                return material_name
+
+                            arcpy.AddMessage("Changed link '%s': %d%s → %d%s" % (row[3], row[1] * 1e3, materialName(old_material), D[Di], materialName(material)))
                             # arcpy.AddMessage("UPDATE msm_Link SET Diameter = %1.3f, SET MaterialID = %s WHERE MUID = %s" % (diameter, material, row[3]))
                             update_cursor.execute(
                                 "UPDATE msm_Link SET Diameter = %1.3f, MaterialID = '%s' WHERE MUID = '%s'" % (
@@ -613,8 +702,8 @@ class PipeDimensionToolTAPro(object):
 
 class PipeDimensionToolResultFile(object):
     def __init__(self):
-        self.label = "1b) Calculate minimum required pipe diameter through Result File"
-        self.description = "1b) Calculate minimum required pipe diameter through Result File"
+        self.label = "1b) Automated Pipe Sizing | MIKE1D Results"
+        self.description = "1b) Automated Pipe Sizing | MIKE1D Results"
         self.canRunInBackground = False
 
     def getParameterInfo(self):
@@ -738,23 +827,9 @@ class PipeDimensionToolResultFile(object):
         arcpy.SetProgressorLabel("Preparing")
         selected_pipes = [row[0] for row in arcpy.da.SearchCursor(pipe_layer, ["muid"])]
 
-        mxd = arcpy.mapping.MapDocument("CURRENT")
-        df = arcpy.mapping.ListDataFrames(mxd)[0]
-
-        def addLayer(layer_source, source, group=None, workspace_type="ACCESS_WORKSPACE"):
-            layer = apmapping.Layer(layer_source)
-            if group:
-                apmapping.AddLayerToGroup(df, group, layer, "BOTTOM")
-            else:
-                apmapping.AddLayer(df, layer, "TOP")
-            updatelayer = apmapping.ListLayers(mxd, layer.name, df)[0]
-            updatelayer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))), workspace_type,
-                                          unicode(os.path.basename(source)))
-
         is_sqlite = True if ".sqlite" in MU_database else False
 
         msm_Link = os.path.join(MU_database, "msm_Link")
-        msm_Node = os.path.join(MU_database, "msm_Node")
 
         arcpy.SetProgressorLabel("Calculating Pipe Dimensions")
 
@@ -765,29 +840,11 @@ class PipeDimensionToolResultFile(object):
             arcpy.AddField_management(shapefile, field_name, datatype)
             return field_name
 
-        # arcpy.SetProgressorLabel("Creating debug output")
-        # debug_output = True
-        # if debug_output:
-        # if len(target_manholes)==1:
-        # with open(r"C:\Papirkurv\Hydrograph.csv", 'w') as f:
-        # for discharge in runoffs:
-        # f.write("%s\n" % ("\t".join([str(d) for d in discharge])))
-        # debug_output_fc = str(arcpy.CopyFeatures_management(pipe_layer, getAvailableFilename(arcpy.env.scratchGDB + "\debug_output")))
-        # RedOpl_field = addField(debug_output_fc, "RedOpl", "FLOAT")
-        # QMax_field = addField(debug_output_fc, "QMax", "FLOAT")
-        # QMaxT_field = addField(debug_output_fc, "QMaxT", "FLOAT")
-        # with arcpy.da.UpdateCursor(debug_output_fc, ["MUID", RedOpl_field, QMax_field, QMaxT_field], where_clause = "MUID IN ('%s')" % ("','".join(selected_pipes))) as cursor:
-        # for row in cursor:
-        # row[1] = total_red_opl[msm_Link_Network.links[row[0]].fromnode]
-        # row[2] = peak_discharge[msm_Link_Network.links[row[0]].fromnode]
-        # row[3] = peak_discharge_time[msm_Link_Network.links[row[0]].fromnode]
-        # cursor.updateRow(row)
-
         peak_discharge = {row[0]:row[1]*1e3 for row in arcpy.da.SearchCursor(result_layer, ["MUID", result_layer_field])}
-        arcpy.AddMessage(peak_discharge)
+        # arcpy.AddMessage(peak_discharge)
 
         if is_sqlite:
-            arcpy.AddMessage(MU_database)
+            # arcpy.AddMessage(MU_database)
             with sqlite3.connect(
                     MU_database) as connection:
                 update_cursor = connection.cursor()
@@ -811,7 +868,7 @@ class PipeDimensionToolResultFile(object):
                         #     ins_cursor.insertRow(ins_row)
                         QFull = 0
                         Di = -1
-                        arcpy.AddMessage(peak_discharge)
+                        # arcpy.AddMessage(peak_discharge)
                         if peak_discharge[row[3]] == 0:
                             Di = 0
                         else:
@@ -824,9 +881,19 @@ class PipeDimensionToolResultFile(object):
                         if keep_largest_diameter and diameter <= row[1]:
                             diameter = row[1]
                         else:
+                            old_material = row[2]
                             if change_material:
                                 material = "Concrete (Normal)" if diameter > 0.45 else "Plastic"
-                            arcpy.AddMessage("Changed %s from %d to %d" % (row[3], row[1] * 1e3, D[Di]))
+                            def materialName(material_id):
+                                if "pl" in material_id.lower():
+                                    material_name = "pl"
+                                elif "concrete" in material_id.lower():
+                                    material_name = "bt"
+                                else:
+                                    material_name = ""
+                                return material_name
+
+                            arcpy.AddMessage("Changed link '%s': %d%s → %d%s" % (row[3], row[1] * 1e3, materialName(old_material), D[Di], materialName(material)))
                             # arcpy.AddMessage("UPDATE msm_Link SET Diameter = %1.3f, SET MaterialID = %s WHERE MUID = %s" % (diameter, material, row[3]))
                             update_cursor.execute(
                                 "UPDATE msm_Link SET Diameter = %1.3f, MaterialID = '%s' WHERE MUID = '%s'" % (
@@ -931,13 +998,25 @@ class upgradeDimensions(object):
         return True
 
     def updateParameters(self, parameters):
-        if not parameters[0].value:
-            mxd = arcpy.mapping.MapDocument("CURRENT")
-            links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
-                    and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)] and "diameter" in [field.name.lower() for field in arcpy.ListFields(lyr)] and ("sqlite" in arcpy.Describe(lyr).catalogPath or "mdb" in arcpy.Describe(lyr).catalogPath)
-                     and lyr.visible][0]
-            if links:
-                parameters[0].value = links
+        if arcgis_pro:
+            if not parameters[0].value:
+                aprx = arcpymapping.ArcGISProject("CURRENT")
+                map_view = aprx.activeMap
+                for layer in map_view.listLayers():
+                    try:
+                        if layer.getSelectionSet() and arcpy.Describe(layer).shapeType == "Polyline":
+                            parameters[0].value = layer.longName
+                            break
+                    except:
+                        pass
+        else:
+            if not parameters[0].value:
+                mxd = arcpy.mapping.MapDocument("CURRENT")
+                links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
+                        and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)] and "diameter" in [field.name.lower() for field in arcpy.ListFields(lyr)] and ("sqlite" in arcpy.Describe(lyr).catalogPath or "mdb" in arcpy.Describe(lyr).catalogPath)
+                         and lyr.visible][0]
+                if links:
+                    parameters[0].value = links
 
         return
 
@@ -1042,13 +1121,25 @@ class downgradeDimensions(object):
         # for lyr in arcpy.mapping.ListLayers(mxd, df):
             # if lyr.supports("workspacepath"):
                 # workspaces.add(lyr.workspacePath)
-        if not parameters[0].value:
-            mxd = arcpy.mapping.MapDocument("CURRENT")
-            links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
-                    and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)] and "diameter" in [field.name.lower() for field in arcpy.ListFields(lyr)] and ("sqlite" in arcpy.Describe(lyr).catalogPath or "mdb" in arcpy.Describe(lyr).catalogPath)
-                    and lyr.visible][0]
-            if links:
-                parameters[0].value = links
+        if arcgis_pro:
+            if not parameters[0].value:
+                aprx = arcpymapping.ArcGISProject("CURRENT")
+                map_view = aprx.activeMap
+                for layer in map_view.listLayers():
+                    try:
+                        if layer.getSelectionSet() and arcpy.Describe(layer).shapeType == "Polyline":
+                            parameters[0].value = layer.longName
+                            break
+                    except:
+                        pass
+        else:
+            if not parameters[0].value:
+                mxd = arcpy.mapping.MapDocument("CURRENT")
+                links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
+                        and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)] and "diameter" in [field.name.lower() for field in arcpy.ListFields(lyr)] and ("sqlite" in arcpy.Describe(lyr).catalogPath or "mdb" in arcpy.Describe(lyr).catalogPath)
+                        and lyr.visible][0]
+                if links:
+                    parameters[0].value = links
         return
 
     def updateMessages(self, parameters): #optional
@@ -1229,7 +1320,11 @@ class CopyDiameter(object):
         try:
             if arcpy.Describe(reference_feature_layer).fidSet:
                 count = int(arcpy.GetCount_management(reference_feature_layer).getOutput(0))
-                userquery = pythonaddins.MessageBox("Change for %d features (selected in reference layer)?" % (count), "Confirm Assignment", 4)
+                if arcgis_pro:
+                    userquery = confirm_assignment(
+                        "Change for %d features (selected in reference layer)?" % (count), "Confirm Assignment", 4)
+                else:
+                    userquery = pythonaddins.MessageBox("Change for %d features (selected in reference layer)?" % (count), "Confirm Assignment", 4)
                 if not userquery == "Yes":
                     pass
                 else:
@@ -1247,7 +1342,11 @@ class CopyDiameter(object):
         try:
             if check_other_layer and arcpy.Describe(target_feature_layer).fidSet:
                 count = int(arcpy.GetCount_management(target_feature_layer).getOutput(0))
-                userquery = pythonaddins.MessageBox("Change for %d features (selected in target layer)?" % (count), "Confirm Assignment", 4)
+                if arcgis_pro:
+                    userquery = confirm_assignment("Change for %d features (selected in target layer)?" % (count),
+                                                   "Confirm Assignment", 4)
+                else:
+                    userquery = pythonaddins.MessageBox("Change for %d features (selected in target layer)?" % (count), "Confirm Assignment", 4)
                 if not userquery == "Yes": 
                     arcpy.AddMessage("Cancelled both user queries")
                     return
@@ -1368,7 +1467,7 @@ class CopyDiameter(object):
 
                             old_field_value = update_cursor.execute("SELECT %s FROM %s WHERE MUID = '%s'" % (field, layer_name, MUID)).fetchone()[0]
                             sql_expression = "UPDATE %s SET %s = %s WHERE MUID = '%s'" % (layer_name, field,
-                                                "'%s'" % (field_value) if type(field_value) is str or type(field_value) is unicode else "%s" % (field_value),
+                                                "'%s'" % (field_value) if type(field_value) is str or (arcgis_pro or type(field_value) is unicode) else "%s" % (field_value),
                                                 MUID)
                             arcpy.AddMessage(sql_expression)
                             arcpy.AddMessage(
@@ -1419,8 +1518,8 @@ class CopyDiameter(object):
 
 class InterpolateInvertLevels(object):
     def __init__(self):
-        self.label       = "3) Interpolate Invert Levels"
-        self.description = "3) Interpolate Invert Levels"
+        self.label       = "3) Invert Level Interpolation"
+        self.description = "3) Invert Level Interpolation"
         self.canRunInBackground = False
 
     def getParameterInfo(self):
@@ -1472,6 +1571,17 @@ class InterpolateInvertLevels(object):
         return True
 
     def updateParameters(self, parameters):
+        if arcgis_pro:
+            if not parameters[0].value:
+                aprx = arcpymapping.ArcGISProject("CURRENT")
+                map_view = aprx.activeMap
+                for layer in map_view.listLayers():
+                    try:
+                        if layer.getSelectionSet() and arcpy.Describe(layer).shapeType == "Polyline":
+                            parameters[0].value = layer.longName
+                            break
+                    except:
+                        pass
         if not parameters[0].value:
             mxd = arcpy.mapping.MapDocument("CURRENT")
             links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
@@ -1646,13 +1756,25 @@ class GetMinimumSlope(object):
         return True
 
     def updateParameters(self, parameters):
-        if not parameters[0].value:
-            mxd = arcpy.mapping.MapDocument("CURRENT")
-            links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
-                    and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)] and ("sqlite" in arcpy.Describe(lyr).catalogPath or "mdb" in arcpy.Describe(lyr).catalogPath)
-                    and lyr.visible][0]
-            if links:
-                parameters[0].value = links
+        if arcgis_pro:
+            if not parameters[0].value:
+                aprx = arcpymapping.ArcGISProject("CURRENT")
+                map_view = aprx.activeMap
+                for layer in map_view.listLayers():
+                    try:
+                        if layer.getSelectionSet() and arcpy.Describe(layer).shapeType == "Polyline":
+                            parameters[0].value = layer.longName
+                            break
+                    except:
+                        pass
+        else:
+            if not parameters[0].value:
+                mxd = arcpy.mapping.MapDocument("CURRENT")
+                links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
+                        and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)] and "diameter" in [field.name.lower() for field in arcpy.ListFields(lyr)] and ("sqlite" in arcpy.Describe(lyr).catalogPath or "mdb" in arcpy.Describe(lyr).catalogPath)
+                        and lyr.visible][0]
+                if links:
+                    parameters[0].value = links
         return
 
     def updateMessages(self, parameters):  # optional
@@ -1666,8 +1788,12 @@ class GetMinimumSlope(object):
         msm_Node = os.path.join(MU_database, "msm_Node")
         msm_Link = os.path.join(MU_database, "msm_Link")
 
-        mxd = arcpy.mapping.MapDocument("CURRENT")
-        df = arcpy.mapping.ListDataFrames(mxd)[0]
+        if arcgis_pro:
+            mxd = arcpy.mp.ArcGISProject("CURRENT")
+            df = mxd.listMaps()[0]
+        else:
+            mxd = arcpy.mapping.MapDocument("CURRENT")
+            df = arcpy.mapping.ListDataFrames(mxd)[0]
         
         def addLayer(layer_source, source, group = None, workspace_type = "ACCESS_WORKSPACE"):
             layer = apmapping.Layer(layer_source)
@@ -2004,13 +2130,25 @@ class CalculateSlopeOfPipe(object):
         return True
 
     def updateParameters(self, parameters): #optional
-        if not parameters[0].value:
-            mxd = arcpy.mapping.MapDocument("CURRENT")
-            links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
-                    and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)] and ("sqlite" in arcpy.Describe(lyr).catalogPath or "mdb" in arcpy.Describe(lyr).catalogPath)
-                     and lyr.visible]
-            if links:
-                parameters[0].value = ";".join(links)
+        if arcgis_pro:
+            if not parameters[0].value:
+                aprx = arcpymapping.ArcGISProject("CURRENT")
+                map_view = aprx.activeMap
+                for layer in map_view.listLayers():
+                    try:
+                        if layer.getSelectionSet() and arcpy.Describe(layer).shapeType == "Polyline":
+                            parameters[0].value = layer.longName
+                            break
+                    except:
+                        pass
+        else:
+            if not parameters[0].value:
+                mxd = arcpy.mapping.MapDocument("CURRENT")
+                links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
+                        and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)] and ("sqlite" in arcpy.Describe(lyr).catalogPath or "mdb" in arcpy.Describe(lyr).catalogPath)
+                         and lyr.visible]
+                if links:
+                    parameters[0].value = ";".join(links)
         return
 
     def updateMessages(self, parameters): #optional
@@ -2121,14 +2259,26 @@ class ResetUpLevelDwlevel(object):
         return True
 
     def updateParameters(self, parameters):  # optional
-        if not parameters[0].value:
-            mxd = arcpy.mapping.MapDocument("CURRENT")
-            links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
-                     lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
-                     and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)]
-                     and lyr.visible][0]
-            if links:
-                parameters[0].value = links
+        if arcgis_pro:
+            if not parameters[0].value:
+                aprx = arcpymapping.ArcGISProject("CURRENT")
+                map_view = aprx.activeMap
+                for layer in map_view.listLayers():
+                    try:
+                        if layer.getSelectionSet() and arcpy.Describe(layer).shapeType == "Polyline":
+                            parameters[0].value = layer.longName
+                            break
+                    except:
+                        pass
+        else:
+            if not parameters[0].value:
+                mxd = arcpy.mapping.MapDocument("CURRENT")
+                links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
+                         lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
+                         and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)]
+                         and lyr.visible][0]
+                if links:
+                    parameters[0].value = links
         return
 
     def updateMessages(self, parameters):  # optional
@@ -2503,4 +2653,773 @@ class AnalyzeCatchmentArea(object):
 
         addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MOUSE Links Dimensioned.lyr", result_layer,
                  workspace_type="FILEGDB_WORKSPACE")
+        return
+
+
+class DrawLongitudinalProfiles(object):
+    def __init__(self):
+        self.label = "7) Draw Longitudinal Profiles"
+        self.description = "2b) Draw Longitudinal Profiles"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        # Define parameter definitions
+
+        pipe_layer = arcpy.Parameter(
+            displayName="Pipe feature layer",
+            name="pipe_layer",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Input")
+
+        result_files = arcpy.Parameter(
+            displayName="RES1D Network Result Files",
+            name="result_files",
+            datatype="File",
+            multiValue=True,
+            parameterType="optional",
+            direction="Input")
+        result_files.filter.list = ["res1d"]
+
+        # # new_names (auto-filled)
+        # new_names = arcpy.Parameter(
+        #     displayName="New Names",
+        #     name="Rename of Result Files?",
+        #     datatype="String",
+        #     multiValue=True,
+        #     parameterType="Optional",
+        #     direction="Input"
+        # )
+
+        pdf_output = arcpy.Parameter(
+            displayName="PDF Output",
+            name="pdf_output",
+            datatype="File",
+            parameterType="Optional",
+            direction="Output")
+        # pdf_output.filter.list = ["pdf"]
+
+        default_name = "Longitudinal Profiles.pdf"
+        default_path = os.path.join(arcpy.env.scratchFolder, default_name)
+        pdf_output.value = default_path
+
+        overwrite_or_append = arcpy.Parameter(
+            displayName="Append to PDF (Default is overwrite)",
+            name="overwrite_or_append",
+            datatype="Boolean",
+            parameterType="optional",
+            direction="Input")
+
+        backup_tempfile = arcpy.Parameter(
+            displayName="Backup Temp File Path",
+            name="backup_tempfile",
+            datatype="String",
+            parameterType="Derived",  # hidden and not user editable
+            direction="Output")
+
+
+        parameters = [pipe_layer, result_files, pdf_output, overwrite_or_append, backup_tempfile]
+        return parameters
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        backup_tempfile = parameters[4]
+        if arcgis_pro:
+            # Reference the active map in the current project
+            aprx = arcpymapping.ArcGISProject("CURRENT")
+            map_view = aprx.activeMap
+
+            # List layers with selected features
+            layers = None
+            for layer in map_view.listLayers():
+                try:
+                    if layer.getSelectionSet() and arcpy.Describe(layer).shapeType == "Polyline":
+                        layers = layer.longName
+                        break
+                except:
+                    pass
+        else:
+            mxd = arcpy.mapping.MapDocument("CURRENT")
+            df = arcpy.mapping.ListDataFrames(mxd)[0]
+            layers = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
+                      lyr.getSelectionSet() if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'][0]
+
+        if layers and not parameters[0].ValueAsText:
+            parameters[0].value = layers
+
+        pdf_output = parameters[2]
+        overwrite_or_append = parameters[3]
+        if pdf_output.ValueAsText and os.path.exists(pdf_output.ValueAsText):
+            overwrite_or_append.enabled = True
+            if overwrite_or_append.enabled:
+                import tempfile
+                import shutil
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
+                    temp_backup_path = temp_file.name
+
+                # Copy the existing file to this temp file
+                shutil.copy2(pdf_output.ValueAsText, temp_backup_path)
+                backup_tempfile.value = temp_backup_path
+
+
+        else:
+            overwrite_or_append.enabled = False
+
+        # if parameters[1].altered and parameters[1].Values and not parameters[2].altered:  # result_files
+        #     input_files = parameters[1].values
+        #     cleaned_names = []
+        #
+        #     for path in input_files:
+        #         basename = os.path.basename(str(path))
+        #         basename = os.path.splitext(basename)[0]
+        #         # Remove unwanted substrings
+        #         cleaned = basename.replace("Default_Network_HD", "") \
+        #             .replace("Default_Network", "") \
+        #             .replace("Default", "") \
+        #             .replace("HD", "")
+        #         cleaned = cleaned.strip("_- ")  # Clean up any leftover junk
+        #         cleaned_names.append(cleaned)
+        #
+        #     parameters[2].values = cleaned_names
+        return
+
+    def updateMessages(self, parameters):  # optional
+
+        return
+
+    def execute(self, parameters, messages):
+        pipe_layer = parameters[0].Value
+
+        if arcgis_pro:
+            from mikeio1d import open as open_res1d
+            from mikeio1d.res1d import Res1D, QueryDataNode, QueryDataReach, QueryDataStructure
+            from shapely import wkb
+            aprx = arcpy.mp.ArcGISProject("CURRENT")
+            map_obj = aprx.activeMap
+            view = aprx.activeView
+            old_scale = map_obj.referenceScale
+            arcpy.AddMessage(old_scale)
+        else:
+            mxd = arcpy.mapping.MapDocument("CURRENT")
+            df = arcpy.mapping.ListDataFrames(mxd)[0]
+
+        result_files = [f.replace("'", "") for f in parameters[1].ValueAsText.split(";")] if parameters[1].ValueAsText else None
+        output_pdf = parameters[2].ValueAsText
+        overwrite_or_append = parameters[3].Value
+        backup_tempfile = parameters[4].Value
+
+        pipe_layer_reference = pipe_layer
+        for lyr in (map_obj.listLayers() if arcgis_pro else arcpy.mapping.ListLayers(mxd)):
+            if lyr.name == pipe_layer.name and lyr.getSelectionSet():
+                pipe_layer_reference = lyr
+                break
+
+        selection_set = pipe_layer_reference.getSelectionSet()
+
+
+        import os
+        import sqlite3
+        import pandas as pd
+        import numpy as np
+        import networkx as nx
+        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_pdf import PdfPages
+        from matplotlib.patches import Rectangle
+        from matplotlib import transforms
+        import matplotlib.image as mpimg
+        import tempfile
+
+        links_selected = [row[0] for row in arcpy.da.SearchCursor(pipe_layer, ["MUID"])]
+
+        # -----------------------
+        # User Inputs
+        # -----------------------
+        # RES1D_FOLDER = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Jens Juuls Vej\MIKE_URBAN\JJV_032\JJV_032_m1d - Result Files\JJV_032_CDS_5_133_240BaseDefault_Network_HD.res1d"
+        SQLITE_FILE = os.path.dirname(arcpy.Describe(pipe_layer).catalogPath)
+        # SQLITE_FILE = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Hasle Torv\MIKE_URBAN\HAT_063\HAT_063.sqlite"
+        OUTPUT_PDF = output_pdf
+        # output_pdf_temporary = OUTPUT_PDF
+        # if overwrite_or_append:
+        #     tmp_pdf
+        #     with tempfile.NamedTemporaryFile(suffix='.pdf', delete=True) as tmp_pdf:
+        #         tmp_path = tmp_pdf.name
+        #     output_pdf_temporary =
+
+        import time
+
+        class TimerLogger:
+            def __init__(self):
+                import time
+                self.time = time
+                self.last = self.time.time()
+
+            def log(self, msg):
+                now = self.time.time()
+                text = "{} (Elapsed: {:.2f} seconds)".format(msg, now - self.last)
+                self.last = now
+                arcpy.SetProgressor("default", msg)
+
+                return text
+
+        tlog = TimerLogger()
+
+        # -----------------------
+        # 1) Load Nodes & Links + Geoms
+        # -----------------------
+        arcpy.AddMessage(tlog.log("Loading Nodes & Links"))
+        node_table = os.path.join(SQLITE_FILE, "msm_Node")
+        link_table = os.path.join(SQLITE_FILE, "msm_Link")
+        # --- Data container classes ---
+        class Link:
+            """Holds Link attributes and native geometry"""
+
+            def __init__(self, muid, fromnodeid, tonodeid,
+                         length, diameter, uplevel, dwlevel, geometry):
+                self.muid = muid
+                self.fromnodeid = fromnodeid
+                self.tonodeid = tonodeid
+                self.length = length
+                self.diameter = diameter
+                self.uplevel = uplevel
+                self.dwlevel = dwlevel
+                self.geometry = geometry
+                if arcgis_pro:
+                    self.shapely_geom = wkb.loads(bytes(geometry.WKB))
+
+        class Node:
+            """Holds Node attributes and native geometry"""
+
+            def __init__(self, muid, invertlevel, groundlevel, geometry):
+                self.muid = muid
+                self.invertlevel = invertlevel if invertlevel != -99 else None
+                self.groundlevel = groundlevel if groundlevel and groundlevel != -99 else self.invertlevel
+                self.geometry = geometry
+                if arcgis_pro:
+                    self.shapely_geom = wkb.loads(bytes(geometry.WKB))
+
+        # -----------------------
+        # 1) Read Links
+        # -----------------------
+        # Build WHERE clause for selected links
+        link_placeholders = ",".join("'{}'".format(m) for m in links_selected)
+        link_where = "muid IN ({})".format(link_placeholders)
+
+        # Determine actual field names for 'from' and 'to' nodes (handles naming variations)
+        all_link_fields = [f.name for f in arcpy.ListFields(link_table)]
+        fromnode_field = "fromnodeid" if "fromnodeid" in all_link_fields else "fromnode"
+        tonode_field = "tonodeid" if "tonodeid" in all_link_fields else "tonode"
+
+        # Fields to retrieve, including the SHAPE token
+        link_fields = [
+            "muid",
+            fromnode_field,
+            tonode_field,
+            "length",
+            "diameter",
+            "UpLevel",
+            "DwLevel",
+            "SHAPE@"
+        ]
+
+        links = {}
+        # Use arcpy.da.SearchCursor to fetch rows and attach geometries
+        with arcpy.da.SearchCursor(link_table, link_fields, link_where) as cursor:
+            for muid, frm, to, length, diam, up, dw, shape in cursor:
+                link = Link(
+                    muid=muid,
+                    fromnodeid=frm,
+                    tonodeid=to,
+                    length=length,
+                    diameter=diam,
+                    uplevel=up,
+                    dwlevel=dw,
+                    geometry=shape
+                )
+                link.length = link.length if link.length else shape.length
+                links[muid] = link
+
+        # -----------------------
+        # 2) Read Nodes
+        # -----------------------
+        # Extract unique node IDs from loaded links
+        node_ids = {link.fromnodeid for link in links.values()} | {link.tonodeid for link in links.values()}
+
+        # Build WHERE clause for selected nodes
+        node_placeholders = ",".join("'{}'".format(nid) for nid in node_ids)
+        node_where = "muid IN ({})".format(node_placeholders)
+
+        # Fields to retrieve, including the SHAPE token
+        node_fields = [
+            "muid",
+            "invertlevel",
+            "groundlevel",
+            "SHAPE@"
+        ]
+
+        nodes = {}
+        # Use arcpy.da.SearchCursor to fetch node rows and attach geometries
+        with arcpy.da.SearchCursor(node_table, node_fields, node_where) as cursor:
+            for muid, invertlevel, groundlevel, shape in cursor:
+                node = Node(
+                    muid=muid,
+                    invertlevel=invertlevel,
+                    groundlevel=groundlevel if groundlevel else invertlevel,
+                    geometry=shape
+                )
+                nodes[muid] = node
+
+        # Log results
+        arcpy.AddMessage("Loaded {} links and {} nodes".format(len(links), len(nodes)))
+
+        # -----------------------
+        # 2) Read Scenarios
+        # -----------------------
+        arcpy.AddMessage(tlog.log("Reading Result Files"))
+        scenario_data = {}
+        if result_files and arcgis_pro:
+            # for f in result_files:
+            #     name = os.path.basename(os.path.splitext(f)[0])
+            #     res = open_res1d(f, nodes = (list(de_nodes.index)))
+            #     gdf = res.network.nodes.to_geopandas(agg='max', include_derived=False)
+            #     gdf = gdf.rename(columns={'max_WaterLevel': 'water_level'}).set_index('name')
+            #     scenario_data[name] = gdf['water_level'].to_dict()
+
+            class Pipe:
+                def __init__(self, muid, start_node, end_node):
+                    self.muid = muid
+                    self.start_node = start_node
+                    self.end_node = end_node
+                    self.water_level_start = None
+                    self.water_level_end = None
+
+            for f in result_files:
+                name = os.path.basename(os.path.splitext(f)[0])
+                scenario_data[name] = []
+                res1d = open_res1d(f, reaches = links_selected)
+                for pipe in links_selected:
+                    if pipe in res1d.reaches:
+                        queries = [QueryDataReach("WaterLevel", pipe, 0),
+                                   QueryDataReach("WaterLevel", pipe, res1d.reaches[pipe].length)]
+                        query_result = res1d.read(queries).max()
+                        pipe_result = Pipe(pipe, res1d.reaches[pipe].start_node, res1d.reaches[pipe].end_node)
+
+                        pipe_result.water_level_start = query_result.iloc[0]
+                        pipe_result.water_level_end = query_result.iloc[1]
+                        scenario_data[name].append(pipe_result)
+
+                # res = open_res1d(f, nodes = (list(de_nodes.index)))
+                # gdf = res.network.nodes.to_geopandas(agg='max', include_derived=False)
+                # gdf = gdf.rename(columns={'max_WaterLevel': 'water_level'}).set_index('name')
+                # scenario_data[name] = gdf['water_level'].to_dict()
+
+        arcpy.AddMessage(tlog.log("Graphing"))
+        # -----------------------
+        # 3) Graph & Paths
+        # -----------------------
+        G = nx.DiGraph()
+        for link in links.values():
+            G.add_edge(link.fromnodeid, link.tonodeid)
+
+        sources = [n for n, d in G.in_degree() if d == 0]
+        sinks = [n for n, d in G.out_degree() if d == 0]
+        paths = []
+        for s in sources:
+            for t in sinks:
+                for p in nx.all_simple_paths(G, s, t):
+                    if p not in paths:
+                        paths.append(p)
+
+        arcpy.AddMessage(tlog.log("Plotting"))
+
+        if arcgis_pro:
+            import geopandas as gpd
+            # Creating Geoseries
+            import contextily as ctx
+
+            origin_CRS = "EPSG:32632"
+            webmercator_crs = "EPSG:3857"
+
+            links_geoseries = gpd.GeoSeries([link.shapely_geom for link in links.values()], crs = origin_CRS).to_crs(webmercator_crs)
+        # nodes_geoseries = gpd.GeoSeries([node.shapely_geom for node in nodes.values()], crs = origin_CRS).to_crs(webmercator_crs)
+
+        # -----------------------
+        # 4) Plot & Save
+        # -----------------------
+        plt.rcParams['pdf.fonttype'] = 42
+
+        arcpy.AddMessage(tlog.log("Plotting"))
+        arcpy.SetProgressor("step", "Plotting...", 0, len(paths), 1)
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_pdf:
+            with PdfPages(tmp_pdf) as pdf:
+                for path_i, path in enumerate(paths):
+                    arcpy.SetProgressorLabel("Plotting Path %s-%s (%d of %d)" % (path[0], path[-1], path_i + 1, len(paths)))
+                    arcpy.SetProgressorPosition(path_i)
+                    # Calculate Chainage
+                    chain = [0.0]
+                    for fromnodeid, tonodeid in zip(path, path[1:]):
+                        link = [link for link in links.values() if link.fromnodeid == fromnodeid and link.tonodeid == tonodeid][0]
+
+                        chain.append(chain[-1] + link.length)
+
+                    groundlevels = [nodes[muid].groundlevel for muid in path]
+                    invertlevels = [nodes[muid].invertlevel for muid in path]
+
+                    # Set up Figures
+                    fw = max(8, 8 + 0.5 * (len(path) - 2))
+                    fig = plt.figure(figsize=(fw, 5), dpi = 300)
+                    ax = fig.add_axes([0.05, 0.15, 0.65, 0.80])  # left, bottom, width, height
+
+                    # bar width
+                    diffs = np.diff(chain) if len(chain) > 1 else [1]
+                    w = min(diffs) * 0.2;
+                    half = w / 2
+
+                    # Draw pipes
+                    for fromnodeid, tonodeid in zip(path, path[1:]):
+                        i = path.index(fromnodeid)
+                        x0, x1 = chain[i], chain[i + 1]
+                        sx, ex = x0 + half, x1 - half
+                        link = [link for link in links.values() if link.fromnodeid == fromnodeid and link.tonodeid == tonodeid][0]
+
+                        # get uplevel, fallback to upstream node invert
+                        bu = link.uplevel if link.uplevel else nodes[fromnodeid].invertlevel
+
+                        # get dwlevel, fallback to downstream node invert
+                        bd = link.dwlevel if link.dwlevel else nodes[tonodeid].invertlevel
+
+                        d = link.diameter*1e3 # mm
+
+                        if sx and ex and bu and bd:
+                            ax.plot([sx, ex], [bu, bd], 'k-', lw=1)
+                            ax.plot([sx, ex], [bu + d / 1000, bd + d / 1000], 'k-', lw=1)
+
+                        # diameter label at bottom of main axes
+                        mid = 0.5 * (sx + ex)
+                        trans = transforms.blended_transform_factory(ax.transData, ax.transAxes)
+                        ax.text(mid, 0, u'ø{}'.format(int(d)) if not np.isnan(d) else "",
+                                transform=trans,
+                                ha='center', va='bottom', fontsize=8)
+
+                    # Draw Manholes
+                    ax.plot(chain, groundlevels, 'g-', lw=0.8, label='Ground Level')
+                    for x, g, inv in zip(chain, groundlevels, invertlevels):
+                        if g and inv:
+                            rect = Rectangle((x - half, inv), w, g - inv, fill=False, edgecolor='black', lw=1.0)
+                            ax.add_patch(rect)
+
+                    cmap = plt.cm.get_cmap('tab10' if arcgis_pro else "Set1")
+
+                    # for idx, (nm, wl) in enumerate(scenario_data.items()):
+                    #     vals = [wl.get(n, np.nan) for n in path]
+                    #     ax.plot(chain, vals, '--', color=cmap(idx), label=nm)
+
+                    # Draw results
+                    for idx, (nm, pipe_result) in enumerate(scenario_data.items()):
+                        modified_chainage = [chain[0]] + [c for c in chain[1:-1] for _ in (0, 1)] + [chain[-1]]
+                        link_water_level = []
+                        for fromnodeid, tonodeid in zip(path, path[1:]):
+                            water_level = next(
+                                ((pipe.water_level_start, pipe.water_level_end) for pipe in pipe_result
+                                 if pipe.start_node == fromnodeid and pipe.end_node == tonodeid),
+                                None
+                            )
+                            if water_level:
+                                link_water_level.extend(water_level)
+                            else:
+                                link_water_level.extend([np.nan, np.nan])
+
+                        ax.plot(modified_chainage, link_water_level, '--', lw = 0.8, color=cmap(idx), label=nm)
+
+                    # Write MUIDs
+                    y_max = ax.get_ylim()[1]
+                    for x, n in zip(chain, path):
+                        ax.text(x, y_max * 0.95, str(n), ha='center', va='bottom', rotation=90, fontsize=8)
+
+                    # ticks, labels, legend
+                    ticks = np.arange(0, np.ceil(chain[-1] / 50) * 50 + 1, 50)
+                    ax.set_xticks(ticks)
+                    ax.set_xticklabels([str(int(t)) for t in ticks], fontsize=8)
+                    ax.set_xlabel('Chainage (m)')
+                    ax.set_ylabel('Elevation (m)')
+                    ax.set_title(u"Profile: {} → {}".format(path[0], path[-1]))
+                    ax.grid(True, linestyle='--', lw=0.5)
+                    legend = ax.legend(fontsize='small', loc='upper left', bbox_to_anchor=(1.02, 1.0))
+
+                    # Create square inset map: e.g., 0.22 x 0.22 in figure coords
+                    inset_size = 0.55
+                    map_ax = fig.add_axes([0.6, 0.15, inset_size, inset_size])  # x0, y0, width, height
+
+                    if False:
+                        # Plot full network in light grey
+                        links_geoseries.plot(ax=map_ax, color='black', linewidth=0.5)
+                        # Highlight selected path
+                        segs = []
+                        for fromnodeid, tonodeid in zip(path, path[1:]):
+                            link = [link for link in links.values() if link.fromnodeid == fromnodeid and link.tonodeid == link.tonodeid][0]
+                            segs.append(link.shapely_geom)
+                        geo_segs_web = gpd.GeoSeries(segs, crs=origin_CRS).to_crs(webmercator_crs)
+                        geo_segs_web.plot(ax=map_ax, color='red', linewidth=1)
+
+                        # Get bounds of the red path
+                        xmin, ymin, xmax, ymax = geo_segs_web.total_bounds
+                        xmid = (xmin + xmax) / 2
+                        ymid = (ymin + ymax) / 2
+
+                        # Ensure square extent
+                        half_extent = max((xmax - xmin), (ymax - ymin)) / 2
+                        expansion_factor = 2
+                        half_extent *= expansion_factor
+
+                        map_ax.set_xlim(xmid - half_extent, xmid + half_extent)
+                        map_ax.set_ylim(ymid - half_extent, ymid + half_extent)
+
+                        # Add basemap
+                        ctx.add_basemap(map_ax, zoom=19, source=ctx.providers.OpenStreetMap.Mapnik, interpolation='bilinear')
+
+                        map_ax.set_axis_off()
+                        map_ax.set_axis_off()
+                    elif arcgis_pro:
+                        muids = []
+                        for fromnodeid, tonodeid in zip(path, path[1:]):
+                            muids.append([link.muid for link in links.values() if
+                                    link.fromnodeid == fromnodeid and link.tonodeid == tonodeid][0])
+
+                        where_clause = "MUID IN ('%s')" % ("' , '".join(muids))
+
+                        def getExtents(extents):
+
+                            XMin = min([ext.XMin for ext in extents])
+                            XMax = max([ext.XMax for ext in extents])
+                            YMin = min([ext.YMin for ext in extents])
+                            YMax = max([ext.YMax for ext in extents])
+
+                            return arcpy.Extent(XMin, YMin, XMax, YMax)
+
+                        for layer in map_obj.listLayers():
+                            try:
+                                layer.setSelectionSet()
+                            except:
+                                pass
+                        arcpy.management.SelectLayerByAttribute(pipe_layer_reference, "NEW_SELECTION", where_clause)
+
+                        view.zoomToAllLayers(True)
+
+                        current_scale = view.camera.scale
+                        arcpy.AddMessage(current_scale)
+                        view.camera.scale = current_scale * 1.5
+                        map_obj.referenceScale = 2000
+
+                        temp_dir = tempfile.gettempdir()
+                        temp_png = os.path.join(temp_dir, "arcgis_map_snapshot")
+
+                        # Export active map to PNG
+
+                        view.exportToPNG(temp_png, height = 1000, width = 1000)
+                        from PIL import Image
+
+                        # Convert PNG to JPG
+                        with Image.open(temp_png + ".png") as img:
+                            rgb_img = img.convert('RGB')  # Remove alpha channel if present
+                            temp_jpg = temp_png + ".jpg"
+                            rgb_img.save(temp_jpg, 'JPEG', quality=65, optimize=True)
+
+                        arcpy.AddMessage(temp_jpg)
+                        img = mpimg.imread(temp_jpg)
+                        map_ax.imshow(img)
+                        map_ax.axis('off')
+
+                    # save & close
+                    pdf.savefig(fig)
+                    # if path_i>2:
+                    #     break
+                    # plt.close(fig)
+
+                # if overwrite or append is true (meaning it should append), it merges the temporary pdf with the output pdf
+            if overwrite_or_append:
+                from pypdf import PdfMerger
+                merger = PdfMerger()
+                merger.append(backup_tempfile)
+                merger.append(tmp_pdf)
+                merger.write(OUTPUT_PDF)
+            else:
+                import shutil
+                shutil.copy(tmp_pdf.name, OUTPUT_PDF)
+
+        print("Saved profiles to: {}".format(OUTPUT_PDF))
+
+        os.startfile(os.path.dirname(OUTPUT_PDF))  # Opens folder in Explorer
+        arcpy.AddMessage(selection_set)
+        pipe_layer_reference.setSelectionSet(list(selection_set))
+        map_obj.referenceScale = old_scale
+        arcpy.AddMessage(old_scale)
+
+        return
+
+
+class DrawClash(object):
+    def __init__(self):
+        self.label       = "8) Draw Profile of Pipe Clash"
+        self.description = "8) Draw Profile of Pipe Clash"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        #Define parameter definitions
+
+        pipe_layer = arcpy.Parameter(
+            displayName="Pipe feature layer",
+            name="pipe_layer",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Input",
+            multiValue = True)
+
+        parameters = [pipe_layer]
+        return parameters
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters): #optional
+        if not parameters[0].value:
+            mxd = arcpy.mapping.MapDocument("CURRENT")
+            links = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'
+                    and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)] and ("sqlite" in arcpy.Describe(lyr).catalogPath or "mdb" in arcpy.Describe(lyr).catalogPath)
+                     and lyr.visible]
+            if links:
+                parameters[0].value = ";".join(links)
+        return
+
+    def updateMessages(self, parameters): #optional
+        return
+
+    def execute(self, parameters, messages):
+        import networker
+        from matplotlib.patches import Rectangle
+        import matplotlib.pyplot as plt
+
+        pipelayers = parameters[0].ValueAsText.split(";")
+
+        pipe_catalogue = pd.DataFrame({
+            "Material": ["Concrete"] * 13,
+            "Intern_dia": [300, 400, 500, 600, 700, 800, 900, 1000, 1200, 1400, 1600, 1800, 2000],
+            "Thick_side": [54, 72, 62, 71, 82, 94, 105, 116, 138, 165, 188, 188, 188],
+            "Thick_top": [54, 72, 116, 110, 128, 146, 164, 183, 219, 256, 290, 290, 290],
+            "Thick_bot": [54, 72, 141, 169, 197, 225, 253, 281, 338, 394, 450, 450, 450],
+            "Total_wid": [408, 544, 624, 742, 864, 988, 1110, 1232, 1476, 1730, 1976, 1976 + 200, 1976 + 400],
+            "Total_hei": [408, 544, 757, 879, 1025, 1171, 1317, 1464, 1757, 2050, 2340, 2340 + 200, 2340 + 400]
+        })
+
+        def get_thick_bot(material, diameter):
+            """
+            Returns the Thick_bot for the given material and diameter.
+            - If material is not in pipe_catalogue, return None.
+            - If diameter matches an Intern_dia exactly, return that Thick_bot.
+            - If not, pick the first Intern_dia > diameter and return its Thick_bot.
+            - If no Intern_dia is larger (i.e., diameter > max in catalogue), return None.
+            """
+            # 1. Filter rows by material
+            df_mat = pipe_catalogue[pipe_catalogue["Material"].apply(lambda m: m.lower() in material.lower())]
+
+            if df_mat.empty:
+                return None
+
+            # 2. Sort by internal diameter
+            df_sorted = df_mat.sort_values("Intern_dia")
+
+            # 3. Find the first row where Intern_dia >= requested diameter
+            larger = df_sorted[df_sorted["Intern_dia"] >= diameter]
+            if not larger.empty:
+                return larger.iloc[0]["Thick_bot"]
+            else:
+                return None
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # STEP 1: Read all pipes (geometry + attributes) into a Python list
+        # ─────────────────────────────────────────────────────────────────────────────
+
+        # We'll store each pipe as a dict with keys: geometry, fromnode, tonode,
+        # diameter, material, uplevel, dwlevel, source_layer
+        pipes = []
+
+        networks = {}
+        for layer in pipelayers:
+            filter_sql_query = "MUID IN ('%s')" % ("', '".join([row[0] for row in arcpy.da.SearchCursor(layer, ["MUID"])]))
+            MU_database = os.path.dirname(arcpy.Describe(layer).catalogPath).replace("\mu_Geometry", "")
+            MU_database = MU_database.replace("!delete!", "")
+            networks[layer] = networker.NetworkLinks(MU_database, filter_sql_query = filter_sql_query)
+            # Make sure the layer actually exists:
+            if not arcpy.Exists(layer):
+                arcpy.AddWarning("Layer not found: {}".format(layer))
+                continue
+
+            # Define fields to pull from each pipe feature
+            fields = ["SHAPE@", "MUID", "Diameter", "MaterialID"]
+            with arcpy.da.SearchCursor(layer, fields) as cursor:
+                for row in cursor:
+                    geom, muid, dia, matid = row
+                    # Skip null geometries or missing fields
+                    if geom is None:
+                        continue
+                    thickness = get_thick_bot(matid, dia * 1000)
+                    pipes.append({
+                        "geometry": geom,
+                        "muid": muid,
+                        "diameter": dia,
+                        "fromnode": networks[layer].links[muid].fromnode,
+                        "tonode": networks[layer].links[muid].tonode,
+                        "material": matid,
+                        "uplevel": networks[layer].links[muid].uplevel,
+                        "dwlevel": networks[layer].links[muid].dwlevel,
+                        "source_layer": layer,
+                        "thickness": thickness / 1e3 if thickness else 0
+                    })
+
+        pipe_sets_checked = []
+        for pipe1 in pipes:
+            for pipe2 in pipes:
+                skip = False
+                for pipe_set in pipe_sets_checked:
+                    if pipe1["muid"] in pipe_set and pipe2["muid"] in pipe_set:
+                        skip = True
+                        break
+
+                if not skip:
+                    pipe_sets_checked.append([pipe1["muid"], pipe2["muid"]])
+
+                    if not pipe1["muid"] == pipe2["muid"]:
+                        intersection_points = pipe1["geometry"].intersect(pipe2["geometry"], 1)
+
+                        if intersection_points:
+                            for intersection_point in intersection_points:
+                                plt.figure()
+                                plt.title("%s - %s" % (pipe1["muid"], pipe2["muid"]))
+
+                                for pipe in [pipe1, pipe2]:
+                                    pipe["clash chainage"] = pipe["geometry"].queryPointAndDistance(intersection_point)[
+                                        1]
+                                    if pipe["clash chainage"] == 0 or pipe["clash chainage"] == pipe["geometry"].length:
+                                        plt.close()
+                                        continue
+                                    for offset in [0, pipe["diameter"], pipe["diameter"] + pipe["thickness"],
+                                                   -pipe["thickness"]]:
+                                        plt.plot([0 - pipe["clash chainage"],
+                                                  pipe["geometry"].length - pipe["clash chainage"]],
+                                                 [pipe["uplevel"] + offset, pipe["dwlevel"] + offset], 'k-', lw=1)
+
+                                # plt.axvspan(-3, 3, color='red', alpha=0.1, zorder=-1)
+
+                                # Vertical line at x=0
+                                plt.axvline(x=0, color='black', linewidth=1, alpha=0.5)
+
+                                # Add tick marks every 0.1 along the y-axis
+                                ymin, ymax = plt.ylim()
+                                for y in np.arange(ymin, ymax, 0.1):
+                                    plt.plot([-1, 1], [y, y], color='black', linewidth=0.5, alpha=0.5)
+                                # plt.grid(axis='y', which='both', linestyle='--', alpha=0.5)
+                                # plt.gca().yaxis.set_major_locator(plt.MultipleLocator(0.2))
+
+                                plt.show()
+                                # plt.plot(xs, ys + pipe["diameter"] / 1000, 'k-', lw=1)
         return
