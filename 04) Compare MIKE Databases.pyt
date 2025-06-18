@@ -2,11 +2,11 @@ import arcpy
 import os
 import re
 import numpy as np
-from arcpy._mapping import Layer
 if "mapping" in dir(arcpy):
     arcgis_pro = False
     import arcpy.mapping as arcpymapping
     from arcpy.mapping import MapDocument as arcpyMapDocument
+    from arcpy._mapping import Layer
 else:
     arcgis_pro = True
     import arcpy.mp as arcpymapping
@@ -38,6 +38,102 @@ def getAvailableFilename(filepath, parent=None):
     else:
         return filepath
 
+def addLayer(layer_source, source, group=None, workspace_type="ACCESS_WORKSPACE", new_name=None,
+             definition_query=None):
+    if arcgis_pro:
+        mxd = arcpy.mp.ArcGISProject("CURRENT")
+        df = mxd.listMaps()[0]
+    else:
+        mxd = arcpy.mapping.MapDocument("CURRENT")
+        df = arcpy.mapping.ListDataFrames(mxd)[0]
+    if arcgis_pro and not ".lyrx" in layer_source and os.path.exists(layer_source.replace(".lyr", ".lyrx")):
+        layer_source = layer_source.replace(".lyr", ".lyrx")
+    arcpy.AddMessage(source)
+    if source and ".sqlite" in source:
+        source_layer = arcpymapping.LayerFile(layer_source) if arcgis_pro else arcpy.mapping.Layer(source)
+
+        if group:
+            if arcgis_pro:
+                update_layer = df.addLayerToGroup(group, source_layer, "BOTTOM")
+            else:
+                arcpymapping.AddLayerToGroup(df, group, source_layer, "BOTTOM")
+        else:
+            if arcgis_pro:
+                update_layer = df.addLayer(source_layer, "TOP")
+            else:
+                arcpymapping.AddLayer(df, source_layer, "TOP")
+
+        if not arcgis_pro: update_layer = arcpymapping.listLayers(mxd, source_layer.name, df)[0] if arcgis_pro else \
+            arcpy.mapping.ListLayers(mxd, source_layer.name, df)[0]
+
+        if arcgis_pro:
+            new_connection_properties = update_layer.connectionProperties
+            new_connection_properties["workspace_factory"] = 'Sql'
+            new_connection_properties["connection_info"]["database"] = os.path.dirname(source)
+            update_layer.updateConnectionProperties()
+        else:
+            if ".sqlite" in source:
+                layer = arcpymapping.Layer(layer_source)
+                update_layer.visible = layer.visible
+                update_layer.labelClasses = layer.labelClasses
+                update_layer.showLabels = layer.showLabels
+                update_layer.name = layer.name
+                update_layer.definitionQuery = definition_query
+
+                try:
+                    arcpymapping.UpdateLayer(df, update_layer, layer, symbology_only=True)
+                except Exception as e:
+                    arcpy.AddWarning(source)
+                    pass
+            else:
+                update_layer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))),
+                                               workspace_type, os.path.basename(source))
+
+        try:
+            arcpymapping.UpdateLayer(df, update_layer, layer, symbology_only=True)
+        except Exception as e:
+            arcpy.AddWarning(source)
+            pass
+    else:
+        layer = arcpymapping.LayerFile(layer_source) if arcgis_pro else arcpymapping.Layer(layer_source)
+        if group:
+            if arcgis_pro:
+                df.addLayerToGroup(group, layer, "BOTTOM")
+            else:
+                arcpymapping.AddLayerToGroup(df, group, layer, "BOTTOM")
+        else:
+            if arcgis_pro:
+                df.addLayer(layer, "TOP")
+            else:
+                arcpymapping.AddLayer(df, layer, "TOP")
+        update_layer = df.listLayers(layer.listLayers()[0].name)[0] if arcgis_pro else \
+            arcpymapping.ListLayers(mxd, layer.name, df)[0]
+        if definition_query:
+            update_layer.definitionQuery = definition_query
+        if new_name:
+            update_layer.name = new_name
+
+        if source:
+            if arcgis_pro:
+                # CONFIRMED WORKING FOR SHAPEFILE -> FILEGDB
+                import copy
+                cp = copy.deepcopy(update_layer.connectionProperties)
+                arcpy.AddMessage(cp)
+                if workspace_type == "FILEGDB_WORKSPACE" or workspace_type == "FILEGDB":
+                    workspace_type = "File Geodatabase"
+                cp["connection_info"]['database'] = os.path.dirname(
+                    source.replace(r"\mu_Geometry", ""))
+                arcpy.AddMessage(cp["connection_info"]['database'])
+                cp['dataset'] = os.path.basename(source)
+                cp['workspace_factory'] = workspace_type
+                arcpy.AddMessage(("😀", update_layer.connectionProperties))
+                arcpy.AddMessage(("😗", cp))
+                update_layer.updateConnectionProperties(update_layer.connectionProperties, cp)
+                arcpy.AddMessage(update_layer.connectionProperties)
+            else:
+                update_layer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))),
+                                               workspace_type, os.path.basename(source))
+    return update_layer
 
 class Toolbox(object):
     def __init__(self):
@@ -45,7 +141,7 @@ class Toolbox(object):
         self.alias = "Compare MIKE Models"
         self.canRunInBackground = True
         # List of tool classes associated with this toolbox
-        self.tools = [CompareMikeModels, FixSimulationModelName]
+        self.tools = [CompareMikeModels, FixSimulationModelName, CompareMikeModelsLabels]
 
 
 class CompareMikeModels(object):
@@ -125,8 +221,12 @@ class CompareMikeModels(object):
             else:
                 return False
 
-        mxd = arcpy.mapping.MapDocument("CURRENT")
-        df = arcpy.mapping.ListDataFrames(mxd)[0]
+        if arcgis_pro:
+            mxd = arcpy.mp.ArcGISProject("CURRENT")
+            df = mxd.listMaps()[0]
+        else:
+            mxd = arcpymapping.MapDocument("CURRENT")
+            df = arcpymapping.ArcGISProject("current").activeMap
 
         def addLayer(layer_source, source, group=None, workspace_type="ACCESS_WORKSPACE"):
             layer = arcpy.mapping.Layer(layer_source)
@@ -139,10 +239,24 @@ class CompareMikeModels(object):
                                           unicode(os.path.basename(source)))
             return updatelayer
 
-        empty_group_mapped = arcpy.mapping.Layer(os.path.dirname(os.path.realpath(__file__)) + r"\Data\EmptyGroup.lyr")
-        empty_group = arcpy.mapping.AddLayer(df, empty_group_mapped, "TOP")
-        empty_group_layer = arcpy.mapping.ListLayers(mxd, "Empty Group", df)[0]
-        empty_group_layer.name = "%s vs. %s" % (os.path.basename(database1), os.path.basename(database2))
+        if arcgis_pro:
+            # Load the .lyr file
+            layer_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), r"Data\EmptyGroup.lyr")
+
+            # Add it to the map
+            df.addDataFromPath(layer_path)
+
+            # Rename it
+            for lyr in df.listLayers():
+                if lyr.name == "Empty Group":
+                    lyr.name = "{} vs. {}".format(os.path.basename(database1).replace(".sqlite","_sqlite"), os.path.basename(database2).replace(".sqlite","_sqlite"))
+                    empty_group_layer = lyr
+                    break
+        else:
+            empty_group_mapped = arcpy.mapping.Layer(os.path.dirname(os.path.realpath(__file__)) + r"\Data\EmptyGroup.lyr")
+            empty_group = arcpy.mapping.AddLayer(df, empty_group_mapped, "TOP")
+            empty_group_layer = arcpy.mapping.ListLayers(mxd, "Empty Group", df)[0]
+            empty_group_layer.name = "%s vs. %s" % (os.path.basename(database1), os.path.basename(database2))
         
         MIKE_folder = os.path.join(os.path.dirname(arcpy.env.scratchGDB), "MIKE URBAN")
         if not os.path.exists(MIKE_folder):
@@ -218,9 +332,9 @@ class CompareMikeModels(object):
             
             arcpy.SetProgressor("default", "Getting MUIDs")
             # Check MUIDs
-            MUIDs = set([features_1.keys() + features_2.keys()][0])
+            MUIDs = set(features_1.keys()) | set(features_2.keys())
 
-            missing_MUIDs = set(np.concatenate((np.setdiff1d(features_1.keys(), features_2.keys(), assume_unique = False), np.setdiff1d(features_2.keys(), features_1.keys(), assume_unique = False))))
+            missing_MUIDs = set(features_1).symmetric_difference(features_2)
             MUIDs_to_check = [MUID for MUID in MUIDs if MUID not in missing_MUIDs]
             features_changed = {}
 
@@ -242,7 +356,7 @@ class CompareMikeModels(object):
             arcpy.SetProgressor("step","Comparing rows for feature %s" % (feature), 0, len(MUIDs_to_check), 1)
             MUIDs_field_changed = {}
             for step, MUID in enumerate(MUIDs_to_check):
-                if step % 10 == 0:
+                if step % 30 == 0:
                     arcpy.SetProgressorPosition(step)
                 idx = compare_rows(features_1[MUID], features_2[MUID], fields = fields)
                 if idx:
@@ -320,18 +434,26 @@ class CompareMikeModels(object):
                         cursor.insertRow(row)
 
             if arcpy.Describe(feature_path_1).dataType == "FeatureClass":
-                newlayer = arcpy.mapping.Layer(result_layer)
-                for label_class in (newlayer.listLabelClasses() if arcgis_pro else newlayer.labelClasses):
+                newlayer = arcpy.management.MakeFeatureLayer(result_layer)[0]
+                if arcgis_pro:
+                    for label_class in (newlayer.listLabelClasses()):
+                        label_class.expression = "$feature.fields"
+                    newlayer.showLabels = True
+                    newlayer.name = newlayer.name + " (%d features)" % (np.sum(
+                        [1 for row in arcpy.da.SearchCursor(result_layer, ["MUID"])]))
+                    update_layer = df.addLayerToGroup(empty_group_layer, newlayer, "TOP")
+                else:
+                    for label_class in (newlayer.listLabelClasses() if arcgis_pro else newlayer.labelClasses):
                         label_class.expression = "[fields]"
-                newlayer.showLabels = True
-                newlayer.name = newlayer.name + " (%d features)" % (np.sum(
-                    [1 for row in arcpy.da.SearchCursor(result_layer, ["MUID"])]))
-                update_layer = arcpy.mapping.AddLayerToGroup(df, empty_group_layer, newlayer, "TOP")
+                    newlayer.showLabels = True
+                    newlayer.name = newlayer.name + " (%d features)" % (np.sum(
+                        [1 for row in arcpy.da.SearchCursor(result_layer, ["MUID"])]))
+                    update_layer = arcpy.mapping.AddLayerToGroup(df, empty_group_layer, newlayer, "TOP")
             else:
-                newlayer = arcpy.mapping.TableView(result_layer)
+                newlayer = arcpy.management.MakeFeatureLayer(result_layer)[0]
                 newlayer.name = newlayer.name + " (%d features)" % (np.sum(
                     [1 for row in arcpy.da.SearchCursor(result_layer, ["MUID"])]))
-                update_layer = arcpy.mapping.AddTableView(df, newlayer)
+                update_layer = df.addLayerToGroup(empty_group_layer, newlayer, "TOP")
 
         return
 
@@ -439,3 +561,195 @@ class FixSimulationModelName(object):
                             os.rename(os.path.join(root, file), os.path.join(root, new_filename))
                         except Exception as e:
                             arcpy.AddMessage(e)
+
+
+class CompareMikeModelsLabels(object):
+    def __init__(self):
+        self.label = "2) Display MIKE Manhole and Pipe Changes"
+        self.description = "2) Display MIKE Manhole and Pipe Changes"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        # Define parameter definitions
+
+        database1 = arcpy.Parameter(
+            displayName="Reference MIKE Model",
+            name="database1",
+            datatype="DEWorkspace",
+            parameterType="Required",
+            direction="Input")
+        database1.filter.list = ["sqlite", "mdb"]
+
+        database2 = arcpy.Parameter(
+            displayName="MIKE Model to compare to reference model",
+            name="database2",
+            datatype="DEWorkspace",
+            parameterType="Required",
+            direction="Input")
+        database2.filter.list = ["sqlite", "mdb"]
+
+        parameters = [database1, database2]
+        return parameters
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        return
+
+    def updateMessages(self, parameters):  # optional
+        return
+
+    def execute(self, parameters, messages):
+        db1 = parameters[0].ValueAsText
+        db2 = parameters[1].ValueAsText
+
+        fc_name = "msm_Link"
+        id_field = "MUID"
+        diam_field = "Diameter"
+
+        if arcgis_pro:
+            mxd = arcpy.mp.ArcGISProject("CURRENT")
+            df = mxd.listMaps()[0]
+        else:
+            mxd = arcpymapping.MapDocument("CURRENT")
+            df = arcpymapping.ArcGISProject("current").activeMap
+
+        if arcgis_pro:
+            # Load the .lyr file
+            layer_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), r"Data\EmptyGroup.lyr")
+
+            # Add it to the map
+            df.addDataFromPath(layer_path)
+
+            # Rename it
+            for lyr in df.listLayers():
+                if lyr.name == "Empty Group":
+                    lyr.name = "{} vs. {}".format(os.path.basename(db1).replace(".sqlite","_sqlite"), os.path.basename(db2).replace(".sqlite","_sqlite"))
+                    empty_group_layer = lyr
+                    break
+        else:
+            empty_group_mapped = arcpy.mapping.Layer(
+                os.path.dirname(os.path.realpath(__file__)) + r"\Data\EmptyGroup.lyr")
+            empty_group = arcpy.mapping.AddLayer(df, empty_group_mapped, "TOP")
+            empty_group_layer = arcpy.mapping.ListLayers(mxd, "Empty Group", df)[0]
+            empty_group_layer.name = "%s vs. %s" % (os.path.basename(db1), os.path.basename(db2))
+
+        MIKE_folder = os.path.join(os.path.dirname(arcpy.env.scratchGDB), "MIKE URBAN")
+        if not os.path.exists(MIKE_folder):
+            os.mkdir(MIKE_folder)
+        MIKE_gdb = os.path.join(MIKE_folder, empty_group_layer.name)
+        no_dir = True
+        dir_ext = 0
+        while no_dir:
+            try:
+                if arcpy.Exists(MIKE_gdb):
+                    os.rmdir(MIKE_gdb)
+                os.mkdir(MIKE_gdb)
+                no_dir = False
+            except Exception as e:
+                dir_ext += 1
+                MIKE_gdb = os.path.join(MIKE_folder, "%s_%d" % (empty_group_layer.name, dir_ext))
+        arcpy.env.scratchWorkspace = MIKE_gdb
+
+        nodes_output_filepath = getAvailableFilename(os.path.join(arcpy.env.scratchGDB, "Nodes"))
+        links_output_filepath = getAvailableFilename(os.path.join(arcpy.env.scratchGDB, "Links"))
+
+        # Load db1 into dict: {ID: (geometry, diameter)}
+        db1_fc = os.path.join(db1, fc_name)
+        db2_fc = os.path.join(db2, fc_name)
+
+        links_db1 = {}
+        with arcpy.da.SearchCursor(db1_fc, [id_field, "SHAPE@", "Diameter", "MaterialID", "nettypeno"]) as cursor:
+            for row in cursor:
+                links_db1[row[0]] = (row[1], row[2], row[3], row[4])
+
+        # Prepare output shapefile
+        spatial_ref = arcpy.Describe(db1_fc).spatialReference
+        arcpy.CreateFeatureclass_management(
+            out_path=os.path.dirname(links_output_filepath),
+            out_name=os.path.basename(links_output_filepath),
+            geometry_type="POLYLINE",
+            spatial_reference=spatial_ref
+        )
+        arcpy.AddField_management(links_output_filepath, "Change", "TEXT", field_length=30)
+        arcpy.AddField_management(links_output_filepath, "NetTypeNo", "SHORT")
+
+        def renameMaterial(materialid):
+            if "plastic" in materialid.lower():
+                return "pl"
+            elif "concrete" in materialid.lower():
+                return "bt"
+
+        # Compare and write differences
+        with arcpy.da.SearchCursor(db2_fc, [id_field, diam_field, "materialID", "nettypeno"]) as cursor2, \
+                arcpy.da.InsertCursor(links_output_filepath, ["SHAPE@", "Change", "NetTypeNo"]) as insert:
+
+            for row in cursor2:
+                link_id, diam2, material2, nettypeno2 = row
+                if link_id in links_db1:
+                    geom1, diam1, material1, nettypeno1 = links_db1[link_id]
+                    if diam1 != diam2 or material1 != material2:
+                        text = u"ø{}{}→ø{}{}".format(int(diam1 * 1000), renameMaterial(material1), int(diam2 * 1000), renameMaterial(material2))
+                        insert.insertRow((geom1, text, nettypeno1))
+
+        # arcpy.AddMessage("✅ Done. Output saved to: %s" % links_output_filepath)
+        # arcpy.AddMessage(links_output_filepath)
+        addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\CompareMIKEModels_Links.lyrx",
+                links_output_filepath, group=empty_group_layer, workspace_type = "FILEGDB")
+
+        # --- Compare msm_Node invert levels ---
+        node_fc_name = "msm_Node"
+        invert_field = "InvertLevel"
+
+        db1_nodes = os.path.join(db1, node_fc_name)
+        db2_nodes = os.path.join(db2, node_fc_name)
+
+        # Load db1 nodes into dict: {ID: (geometry, invert)}
+        nodes_db1 = {}
+        with arcpy.da.SearchCursor(db1_nodes, [id_field, "SHAPE@", invert_field, "Diameter", "nettypeno"]) as cursor:
+            for row in cursor:
+                nodes_db1[row[0]] = (row[1], row[2], row[3], row[4])
+
+        # Prepare output shapefile
+        spatial_ref_nodes = arcpy.Describe(db1_nodes).spatialReference
+        arcpy.CreateFeatureclass_management(
+            out_path=os.path.dirname(nodes_output_filepath),
+            out_name=os.path.basename(nodes_output_filepath),
+            geometry_type="POINT",
+            spatial_reference=spatial_ref_nodes
+        )
+        arcpy.AddField_management(nodes_output_filepath, "Change", "TEXT", field_length=30)
+        arcpy.AddField_management(nodes_output_filepath, "NetTypeNo", "SHORT")
+
+        # Compare and write changed inverts
+        with arcpy.da.SearchCursor(db2_nodes, [id_field, invert_field, "Diameter", "nettypeno"]) as cursor2, \
+                arcpy.da.InsertCursor(nodes_output_filepath, ["SHAPE@", "Change"]) as insert:
+
+            for row in cursor2:
+                node_id, inv2, diameter2, nettypeno2 = row
+                if node_id in nodes_db1:
+                    geom1, inv1, diameter1, nettypeno1 = nodes_db1[node_id]
+                    text = ""
+                    if inv1 != inv2:
+                        text = "BK: {:.2f}→{:.2f}".format(inv1, inv2)
+
+                    if diameter2 != diameter1:
+                        if text:
+                            text += "\n"
+                        text += "D: ø{:.0f}→ø{:.0f}".format(diameter1 * 1e3, diameter2 * 1e3)
+                    if len(text)>0:
+                        insert.insertRow((geom1, text))
+
+
+        arcpy.AddMessage("✅ Done. Node changes saved to: %s" % nodes_output_filepath)
+        addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\CompareMIKEModels_Nodes.lyrx",
+                 nodes_output_filepath, group=empty_group_layer, workspace_type="FILEGDB")
+
+        # def addLayer(layer_source, source, group=None, workspace_type="ACCESS_WORKSPACE", new_name=None,
+        #              definition_query=None):
+
+
+
+
+        return
