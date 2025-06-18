@@ -40,13 +40,17 @@ def getAvailableFilename(filepath, parent=None):
 from arcpy import env
 
 
-class Toolbox(object):
-    def __init__(self):
-        self.label = "Display Mike Urban Model"
-        self.alias = "Display Mike Urban Model"
+if not arcgis_pro:
+    class Toolbox(object):
+        def __init__(self):
+            self.label = "Display Mike Urban Model"
+            self.alias = "Display Mike Urban Model"
 
-        # List of tool classes associated with this toolbox
-        self.tools = [DisplayMikeUrban, CopyMUPTemplate]  # DimensionAnalysis, DisplayPipeElevation
+            # List of tool classes associated with this toolbox
+            if arcgis_pro:
+                self.tools = None
+            else:
+                self.tools = [DisplayMikeUrban, CopyMUPTemplate]  # DimensionAnalysis, DisplayPipeElevation
 
 
 class DisplayMikeUrban(object):
