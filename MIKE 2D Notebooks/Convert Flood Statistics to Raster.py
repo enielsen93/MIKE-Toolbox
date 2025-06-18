@@ -10,7 +10,7 @@ import os
 import numpy as np
 
 tic = time.time()
-DFSUFile = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Hasle Torv\MIKE_URBAN\HAT_062\HAT_062_m21fm - Result Files\HAT_062_CDS_5_132_overlandBaseDefault_2D_Flood_statistics.dfsu"
+DFSUFile = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Jyllands Alle\MIKE_REGNVAND\JYL_072\JYL_072_FM_m21fm - Result Files\JYL_072_FM_CDS_5_144_240_2080BaseDefault_2D_Flood_statistics.dfsu"
 DFSUField = "Maximum water depth"
 RasterFileOutput = DFSUFile.replace(".dfsu",".tif")
 clip_layers = None

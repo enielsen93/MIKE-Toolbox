@@ -13,15 +13,15 @@ from scipy.spatial import cKDTree
 from datetime import timedelta
 from scipy.interpolate import RegularGridInterpolator
 
-DHMFile = r"C:\Users\ELNN\OneDrive - Ramboll\Documents\Aarhus Vand\Vesterbro Torv\MIKE_URBAN\04_DTM\Løsningsforslag 2023-12-11.tif"
+DHMFile = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Jyllands Alle\MIKE_REGNVAND\04_DTM\Terræn_Bygninger_Regn_Viby_J.tif"
 mesh_files = [
-                r"C:\Users\ELNN\OneDrive - Ramboll\Documents\Aarhus Vand\Vesterbro Torv\MIKE_URBAN\07_MESH\VBT_Mesh_2023_11_29.mesh"
+                r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Jyllands Alle\MIKE_REGNVAND\07_2D\JYL_072_v090.mesh"
             ]
 mesh_files = np.flip(mesh_files)
 for MeshFile in mesh_files:
     print(MeshFile)
 
-    MeshFileOutput = os.path.join(r"C:\Users\ELNN\OneDrive - Ramboll\Documents\Aarhus Vand\Vesterbro Torv\MIKE_URBAN\07_MESH\Nødoverløb med jordbassiner", os.path.basename(MeshFile).replace(".mesh", "_interp.mesh"))
+    MeshFileOutput = MeshFile.replace(".mesh", "_Z.mesh")
 
     dfs = mikeio.dfsu.Mesh(MeshFile)
 
