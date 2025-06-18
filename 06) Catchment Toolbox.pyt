@@ -5,13 +5,13 @@ import os
 import arcpy
 import numpy as np
 import re
-import pythonaddins
 import hashlib
 import xlwt
 import csv
 
 if "mapping" in dir(arcpy):
     arcgis_pro = False
+    import pythonaddins
     import arcpy.mapping as arcpymapping
     from arcpy.mapping import MapDocument as arcpyMapDocument
 else:
@@ -27,6 +27,98 @@ def getAvailableFilename(filepath):
         return filepath + "%d" % i
     else:
         return filepath
+
+def addLayer(layer_source, source, group=None, workspace_type="ACCESS_WORKSPACE", new_name=None,
+             definition_query=None):
+    if arcgis_pro:
+        mxd = arcpy.mp.ArcGISProject("CURRENT")
+        df = mxd.listMaps()[0]
+    else:
+        mxd = arcpy.mapping.MapDocument("CURRENT")
+        df = arcpy.mapping.ListDataFrames(mxd)[0]
+
+    if arcgis_pro and not ".lyrx" in layer_source and os.path.exists(layer_source.replace(".lyr", ".lyrx")):
+        layer_source = layer_source.replace(".lyr", ".lyrx")
+
+    if source and ".sqlite" in source:
+        source_layer = arcpymapping.LayerFile(layer_source) if arcgis_pro else arcpy.mapping.Layer(source)
+        if group:
+            if arcgis_pro:
+                update_layer = df.addLayerToGroup(group, source_layer, "BOTTOM")
+            else:
+                arcpymapping.AddLayerToGroup(df, group, source_layer, "BOTTOM")
+        else:
+            if arcgis_pro:
+                update_layer = df.addLayer(source_layer, "TOP")
+            else:
+                arcpymapping.AddLayer(df, source_layer, "TOP")
+
+        if not arcgis_pro: update_layer = df.listLayers(mxd, source_layer.name, df)[0] if arcgis_pro else \
+            arcpy.mapping.ListLayers(mxd, source_layer.name, df)[0]
+
+        if arcgis_pro:
+            new_connection_properties = update_layer.connectionProperties
+            new_connection_properties["workspace_factory"] = 'Sql'
+            new_connection_properties["connection_info"]["database"] = os.path.dirname(source)
+            update_layer.updateConnectionProperties()
+        else:
+            if ".sqlite" in source:
+                layer = arcpymapping.Layer(layer_source)
+                update_layer.visible = layer.visible
+                update_layer.labelClasses = layer.labelClasses
+                update_layer.showLabels = layer.showLabels
+                update_layer.name = layer.name
+                update_layer.definitionQuery = definition_query
+
+                try:
+                    arcpymapping.UpdateLayer(df, update_layer, layer, symbology_only=True)
+                except Exception as e:
+                    arcpy.AddWarning(source)
+                    pass
+            else:
+                update_layer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))),
+                                               workspace_type, os.path.basename(source))
+
+        try:
+            arcpymapping.UpdateLayer(df, update_layer, layer, symbology_only=True)
+        except Exception as e:
+            arcpy.AddWarning(source)
+            pass
+    else:
+        layer = arcpymapping.LayerFile(layer_source) if arcgis_pro else arcpymapping.Layer(layer_source)
+        if group:
+            if arcgis_pro:
+                df.addLayerToGroup(group, layer, "TOP")
+            else:
+                arcpymapping.AddLayerToGroup(df, group, layer, "TOP")
+        else:
+            if arcgis_pro:
+                df.addLayer(layer, "TOP")
+            else:
+                arcpymapping.AddLayer(df, layer, "TOP")
+        update_layer = df.listLayers(layer.listLayers()[0].name)[0] if arcgis_pro else \
+            arcpymapping.ListLayers(mxd, layer.name, df)[0]
+        if definition_query:
+            update_layer.definitionQuery = definition_query
+        if new_name:
+            update_layer.name = new_name
+
+        if source:
+            if arcgis_pro:
+                # CONFIRMED WORKING FOR SHAPEFILE -> FILEGDB
+                import copy
+                cp = copy.deepcopy(update_layer.connectionProperties)
+                if workspace_type == "FILEGDB_WORKSPACE":
+                    workspace_type = "File Geodatabase"
+                cp["connection_info"]['database'] = os.path.dirname(
+                    source.replace(r"\mu_Geometry", ""))  # output db path+name
+                cp['dataset'] = os.path.basename(source)
+                cp['workspace_factory'] = workspace_type
+                update_layer.updateConnectionProperties(update_layer.connectionProperties, cp)
+            else:
+                update_layer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))),
+                                               workspace_type, os.path.basename(source))
+    return update_layer
 
 def splitWhereclause(iterator):
     iterator = np.array(iterator)
@@ -521,7 +613,7 @@ class CatchmentProcessingScalgo(object):
                                'Mark': 0, 'Hoej vegetation': 0, 'Befaestet vej': 100, 'Ubefaestet vej': 0, 'Bygning': 100}
 
         impervious_table.columns = [['GPLong', 'GridCode'], ['String', 'Feature'], ['Double', 'Imperviousness']]
-        impervious_table.values = [[key, value, imperviousness_dict[value]] for key,value in gridcode_dict.iteritems()]
+        impervious_table.values = [[key, value, imperviousness_dict[value]] for key, value in gridcode_dict.items()]
 
         field = arcpy.Parameter(
             displayName="Field to assign imperviousness to",
@@ -551,7 +643,7 @@ class CatchmentProcessingScalgo(object):
         impervious_table = parameters[2].Value
         set_to_field = parameters[3].ValueAsText
         arcpy.env.overwriteOutput = True
-        arcpy.AddMessage(impervious_table)
+        # arcpy.AddMessage(impervious_table)
         mike_urban_database = os.path.dirname(arcpy.Describe(ms_Catchment).catalogPath)
         is_sqlite = True if ".sqlite" in mike_urban_database else False
 
@@ -566,27 +658,49 @@ class CatchmentProcessingScalgo(object):
                 return self.impervious_area / self.area * 100
 
         catchments = {row[0]: Catchment(row[1]) for row in arcpy.da.SearchCursor(ms_Catchment, ["MUID", "SHAPE@Area"])}
-        arcpy.AddMessage([field.name for field in arcpy.ListFields(ms_Catchment)])
+        # arcpy.AddMessage([field.name for field in /arcpy.ListFields(ms_Catchment)])
         if is_sqlite:
             with arcpy.da.SearchCursor(ms_Catchment, ["MUID", set_to_field if set_to_field else "modelaimparea"]) as cursor:
                 for row in cursor:
                     catchments[row[0]].old_imperviousness = row[1]
 
+        in_memory_fc = r"C:\Papirkurv\Bob.shp"
+        arcpy.CopyFeatures_management(ms_Catchment, in_memory_fc)
+        arcpy.RepairGeometry_management(in_memory_fc)
+        # arcpy.AddMessage(str(/))
+
         # ms_Catchment_copy = arcpy.management.MinimumBoundingGeometry(ms_Catchment, r"C:\Papirkurv\ms_Catchment2", geometry_type = "RECTANGLE_BY_AREA", group_option = "ALL")[0]
         # ms_Catchment_copy = arcpy.management.CopyFeatures(ms_Catchment, r"in_memory\ms_Catchment")[0]
         arcpy.SetProgressor("default", "Answer user promt (may be behind window)")
         arcpy.AddMessage("Answer user promt (may be behind window)")
-        userquery = pythonaddins.MessageBox(
-            "Assign imperviousness to %s catchments?" % (len(catchments)),
-            "Confirm Assignment", 4)
+        if arcgis_pro:
+            import tkinter as tk
+            from tkinter import messagebox
 
-        arcpy.AddMessage("MUIDs IN ('%s')" % ("', '".join(catchments.keys())))
+            def confirm_assignment(num_features):
+                root = tk.Tk()
+                root.withdraw()  # Hide the main window
+                result = messagebox.askyesno("Confirm Assignment", f"Assign imperviousness to {num_features} catchments?")
+                root.destroy()
+                return result
+
+            userquery = confirm_assignment(len(catchments))
+            if userquery:
+                userquery = "Yes"
+        else:
+            userquery = pythonaddins.MessageBox(
+                "Assign imperviousness to %s catchments?" % (len(catchments)),
+                "Confirm Assignment", 4)
+
+        # arcpy.AddMessage("MUIDs IN ('%s')" % ("', '".join(catchments.keys())))
         if userquery == "Yes":
             gridcode_dict = {row[0]: row[1] for row in impervious_table}
             imperviousness_dict = {row[1]: row[2] for row in impervious_table}
 
-            gridcodes_impervious = [gridcode for gridcode, area_cover in gridcode_dict.iteritems() if
-                                    imperviousness_dict[area_cover] > 0]
+            gridcodes_impervious = [
+                gridcode for gridcode, area_cover in gridcode_dict.items()
+                if imperviousness_dict[area_cover] > 0
+            ]
 
             # raster_class = arcpy.Raster(raster)
             #
@@ -598,9 +712,8 @@ class CatchmentProcessingScalgo(object):
             # raster_np_array[np.isin(raster_np_array, gridcodes_impervious, invert = True)] = 0
             # raster_edited = arcpy.NumPyArrayToRaster(raster_np_array,lowerLeft,cellSize,
             #                          value_to_nodata=0)
-
-            # raster_clipped = arcpy.management.Clip(raster, None, r"in_memory\raster_clipped", in_template_dataset = ms_Catchment_copy)[0]
-            raster_polygon = arcpy.RasterToPolygon_conversion(in_raster=raster, out_polygon_features=r"in_memory\raster_to_polygon",
+            raster_clipped = arcpy.management.Clip(raster, None, r"in_memory\raster_clipped", in_template_dataset = in_memory_fc)[0]
+            raster_polygon = arcpy.RasterToPolygon_conversion(in_raster=raster_clipped, out_polygon_features=r"in_memory\raster_to_polygon",
                                              simplify="SIMPLIFY", raster_field="Value",
                                              create_multipart_features="SINGLE_OUTER_PART", max_vertices_per_feature="")[0]
 
@@ -610,7 +723,7 @@ class CatchmentProcessingScalgo(object):
                     cursor.deleteRow()
             arcpy.RepairGeometry_management(raster_polygon)
 
-            arcpy.AddMessage((raster_polygon, arcpy.Describe(ms_Catchment).catalogPath))
+            # arcpy.AddMessage((raster_polygon, arcpy.Describe(ms_Catchment).catalogPath))
 
             # arcpy.CopyFeatures_management(arcpy.Describe(ms_Catchment).catalogPath, "in_memory\ms_Catchment")
             arcpy.Select_analysis(arcpy.Describe(ms_Catchment).catalogPath,
@@ -1044,7 +1157,7 @@ class FAS2Deloplande(object):
                 with arcpy.da.UpdateCursor(parameters[1].ValueAsText, [parameters[2].ValueAsText]) as catchmentcursor:
                     for i,row in enumerate(catchmentcursor):
                         arcpy.SetProgressorPosition(i)
-                        if catchmentForbrug[i] <> 0:
+                        if catchmentForbrug[i] != 0:
                             row[0] = catchmentForbrug[i]
                             catchmentcursor.updateRow(row)
 
@@ -1071,7 +1184,7 @@ class FAS2Deloplande(object):
                 with arcpy.da.UpdateCursor(parameters[1].ValueAsText, [parameters[2].ValueAsText]) as catchmentcursor:
                     for i,row in enumerate(catchmentcursor):
                         arcpy.SetProgressorPosition(i)
-                        if catchmentForbrug[i] <> 0:
+                        if catchmentForbrug[i] != 0:
                             row[0] = catchmentForbrug[i]
                             catchmentcursor.updateRow(row)
             else:
@@ -1081,7 +1194,7 @@ class FAS2Deloplande(object):
             with arcpy.da.UpdateCursor(parameters[1].ValueAsText, [parameters[2].ValueAsText]) as catchmentcursor:
                 for i,row in enumerate(catchmentcursor):
                     arcpy.SetProgressorPosition(i)
-                    if catchmentForbrug[i] <> 0:
+                    if catchmentForbrug[i] != 0:
                         row[0] = catchmentForbrug[i]
                         catchmentcursor.updateRow(row)
         return
@@ -1808,15 +1921,50 @@ class SetImperviousness(object):
         catchments = parameters[0].ValueAsText
         imperviousness = parameters[1].Value
 
+        is_sqlite = ".sqlite" in arcpy.Describe(catchments).catalogPath
+
         MUIDs = [row[0] for row in arcpy.da.SearchCursor(catchments, ["MUID"])]
 
-        userquery = pythonaddins.MessageBox(
-            "Assign imperviousness to %s catchments?" % (len(MUIDs)),
-            "Confirm Assignment", 4)
+        if arcgis_pro:
+            import tkinter as tk
+            from tkinter import messagebox
+
+            def confirm_assignment(num_features):
+                root = tk.Tk()
+                root.withdraw()  # Hide the main window
+                result = messagebox.askyesno("Confirm Assignment", f"Assign value to {num_features} features?")
+                root.destroy()
+                return result
+
+            userquery = confirm_assignment(len(MUIDs))
+            if userquery:
+                userquery = "Yes"
+        else:
+            userquery = pythonaddins.MessageBox(
+                "Assign imperviousness to %s catchments?" % (len(MUIDs)),
+                "Confirm Assignment", 4)
         arcpy.AddMessage("MUIDs IN ('%s')" % ("', '".join(MUIDs)))
         if userquery == "Yes":
             if "OplandData_GDB" in arcpy.Describe(catchments).file:
                 catchmentcursor = arcpy.da.UpdateCursor(catchments, ["MUID", "BEF_GRAD"], where_clause = "MUIDs IN ('%s')" % ("', '".join(MUIDs)))
+            elif is_sqlite:
+                import sqlite3
+                sqlite_database_path, table_name = os.path.split(arcpy.Describe(catchments).catalogPath)
+                arcpy.AddMessage(sqlite_database_path)
+                conn = sqlite3.connect(sqlite_database_path)
+                cursor = conn.cursor()
+                query = """
+                    UPDATE msm_Catchment
+                    SET modelaimparea = ?
+                    WHERE MUID IN ({})
+                """.format(','.join(['?'] * len(MUIDs)))
+
+                # Execute the query with parameters
+                cursor.execute(query, [imperviousness] + MUIDs)
+
+                # Commit and close
+                conn.commit()
+                conn.close()
             else:
                 catchmentcursor = arcpy.da.UpdateCursor(
                     os.path.join(os.path.dirname(arcpy.Describe(catchments).path), "msm_HModA"), ["CatchID", "ImpArea"], where_clause = "CatchID IN ('%s')" % ("', '".join(MUIDs)))
@@ -1963,8 +2111,12 @@ class CatchmentSlopeAnalysis(object):
         result_layer = parameters[7].ValueAsText
         result_layer_field = parameters[8].ValueAsText
 
-        mxd = arcpy.mapping.MapDocument("CURRENT")
-        df = arcpy.mapping.ListDataFrames(mxd)[0]
+        if arcgis_pro:
+            mxd = arcpy.mp.ArcGISProject("CURRENT")
+            df = mxd.listMaps()[0]
+        else:
+            mxd = arcpy.mapping.MapDocument("CURRENT")
+            df = arcpy.mapping.ListDataFrames(mxd)[0]
 
         arcpy.env.overwriteOutput = True
 
@@ -1984,127 +2136,6 @@ class CatchmentSlopeAnalysis(object):
         # catchment_loop = "in_memory\Catchment_loop"
 
         arcpy.management.CopyFeatures(msm_Catchment, catchments_output)
-        arcgis_pro = False
-
-        def addLayer(layer_source, source, group=None, workspace_type="ACCESS_WORKSPACE", new_name=None,
-                     definition_query=None):
-            if ".sqlite" in source:
-                source_layer = arcpymapping.LayerFile(layer_source) if arcgis_pro else arcpy.mapping.Layer(source)
-                # if not "objectid" in [field.name.lower() for field in arcpy.ListFields(source)]:
-                #     import sqlite3
-                #     with sqlite3.connect(MU_database) as connection:
-                #         update_cursor = connection.cursor()
-                #         sql_expression = """
-                #         PRAGMA foreign_keys=off;
-                #         BEGIN TRANSACTION;
-                #
-                #         ALTER TABLE %s RENAME TO delete_table;
-                #
-                #         CREATE TABLE %s
-                #         (
-                #           column1 datatype [ NULL | NOT NULL ],
-                #           column2 datatype [ NULL | NOT NULL ],
-                #           ...
-                #           CONSTRAINT constraint_name UNIQUE (uc_col1, uc_col2, ... uc_col_n)
-                #         );
-                #
-                #         INSERT INTO table_name SELECT * FROM old_table;
-                #
-                #         COMMIT;
-                #
-                #         PRAGMA foreign_keys=on;
-                #         """
-                #         try:
-                #             update_cursor.execute("ALTER TABLE %s ADD COLUMN OBJECTID INTEGER" % os.path.basename(source))
-                #             sql_expression = "CREATE INDEX OBJECTID ON %s(OBJECTID)" % os.path.basename(source)
-                #             update_cursor.execute(sql_expression)
-                #         except Exception as e:
-                #             arcpy.AddMessage(source)
-                #             raise(e)
-
-                if group:
-                    if arcgis_pro:
-                        update_layer = df.addLayerToGroup(group, source_layer, "BOTTOM")
-                    else:
-                        arcpymapping.AddLayerToGroup(df, group, source_layer, "BOTTOM")
-                else:
-                    if arcgis_pro:
-                        update_layer = df.addLayer(source_layer, "BOTTOM")
-                    else:
-                        arcpymapping.AddLayer(df, source_layer, "BOTTOM")
-
-                if not arcgis_pro: update_layer = df.listLayers(mxd, source_layer.name, df)[0] if arcgis_pro else \
-                    arcpy.mapping.ListLayers(mxd, source_layer.name, df)[0]
-
-                if arcgis_pro:
-                    new_connection_properties = update_layer.connectionProperties
-                    new_connection_properties["workspace_factory"] = 'Sql'
-                    new_connection_properties["connection_info"]["database"] = os.path.dirname(source)
-                    update_layer.updateConnectionProperties()
-                else:
-                    if ".sqlite" in source:
-                        layer = arcpymapping.Layer(layer_source)
-                        update_layer.visible = layer.visible
-                        update_layer.labelClasses = layer.labelClasses
-                        update_layer.showLabels = layer.showLabels
-                        update_layer.name = layer.name
-                        update_layer.definitionQuery = definition_query
-
-                        try:
-                            arcpymapping.UpdateLayer(df, update_layer, layer, symbology_only=True)
-                        except Exception as e:
-                            arcpy.AddWarning(source)
-                            pass
-                    else:
-                        update_layer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))),
-                                                       workspace_type, os.path.basename(source))
-
-                # layer_source_mike_plus = layer_source.replace("MOUSE", "MIKE+") if "MOUSE" in layer_source and os.path.exists(layer_source.replace("MOUSE", "MIKE+")) else None
-                # layer_source = layer_source_mike_plus if layer_source_mike_plus else layer_source
-                # layer = arcpymapping.Layer(layer_source)
-                # update_layer.visible = layer.visible
-                # update_layer.labelClasses = layer.labelClasses
-                # update_layer.showLabels = layer.showLabels
-                # update_layer.name = layer.name
-                # update_layer.definitionQuery = definition_query
-
-                try:
-                    arcpymapping.UpdateLayer(df, update_layer, layer, symbology_only=True)
-                except Exception as e:
-                    arcpy.AddWarning(source)
-                    pass
-            else:
-                # arcpy.AddMessage(layer_source)
-                layer = arcpymapping.LayerFile(layer_source) if arcgis_pro else arcpymapping.Layer(layer_source)
-                if group:
-                    if arcgis_pro:
-                        df.addLayerToGroup(group, layer, "BOTTOM")
-                    else:
-                        arcpymapping.AddLayerToGroup(df, group, layer, "BOTTOM")
-                else:
-                    if arcgis_pro:
-                        df.addLayer(layer, "BOTTOM")
-                    else:
-                        arcpymapping.AddLayer(df, layer, "TOP")
-                update_layer = df.listLayers(layer.listLayers()[0].name)[0] if arcgis_pro else \
-                    arcpymapping.ListLayers(mxd, layer.name, df)[0]
-                if definition_query:
-                    update_layer.definitionQuery = definition_query
-                if new_name:
-                    update_layer.name = new_name
-
-                if arcgis_pro:
-                    df.updateConnectionProperties(update_layer.connectionProperties['connection_info']['database'],
-                                                  os.path.dirname(source.replace(r"\mu_Geometry", "")))
-                else:
-                    update_layer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))),
-                                                   workspace_type, os.path.basename(source))
-
-            if "msm_Node" in source:
-                for label_class in (update_layer.listLabelClasses() if arcgis_pro else update_layer.labelClasses):
-                    if show_depth:
-                        label_class.expression = label_class.expression.replace("return labelstr",
-                                                                                'if [GroundLevel] and [InvertLevel]: labelstr += "\\nD:%1.2f" % ( convertToFloat([GroundLevel]) - convertToFloat([InvertLevel]) )\r\n  return labelstr')
 
         arcpy.SetProgressor("default", "Creating MIKE Folder")
         MIKE_folder = os.path.join(os.path.dirname(arcpy.env.scratchWorkspace), "MIKE URBAN")
@@ -2316,7 +2347,7 @@ class CatchmentSlopeAnalysis(object):
 
                     links_3d = []
                     for link in links:
-                        if result_layer_field.lower() == "Up_MaxE & Dw_MaxE".lower():
+                        if result_layer_field and result_layer_field.lower() == "Up_MaxE & Dw_MaxE".lower():
                             links_3d.append(link.shape_3d(uplevel=link_results[link.MUID].up_max_elevation,
                                                           dwlevel=link_results[link.MUID].dw_max_elevation))
                         else:
