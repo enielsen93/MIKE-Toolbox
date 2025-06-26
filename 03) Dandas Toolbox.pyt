@@ -323,12 +323,25 @@ class Dandas2MULinks(object):
             afloebkategori = []
         statusUpdate("Reading %s" % (os.path.basename(dandas_knuder)),tic)
 
-        if arcgis_pro:
-            with open(dandas_knuder, "r", encoding="utf-8") as infile:
-                txt = infile.read()
+        # Use the right open function
+        if sys.version_info[0] < 3:
+            import codecs
+            def open_with_encoding(path, encoding):
+                return codecs.open(path, "r", encoding=encoding)
         else:
-            with open(dandas_knuder, "r") as infile:
-                txt = infile.read()
+            def open_with_encoding(path, encoding):
+                return open(path, "r", encoding=encoding)
+
+        def read_xml_with_declared_encoding(filepath):
+            with open(filepath, "rb") as f:
+                head = f.read(512)
+                match = re.search(br'<\?xml[^>]*encoding=["\']([^"\']+)["\']', head)
+                encoding = match.group(1).decode("ascii") if match else "utf-8"
+
+            with open_with_encoding(filepath, encoding) as f:
+                return f.read()
+
+        txt = read_xml_with_declared_encoding(dandas_knuder)
 
         txt = re.sub(r' xmlns="[^"]+"',"",txt)
         
@@ -503,12 +516,8 @@ class Dandas2MULinks(object):
                             
         if dandas_ledninger:
             arcpy.SetProgressor("default","Reading links")
-            if arcgis_pro:
-                with open(dandas_ledninger, "r", encoding="utf-8") as infile:
-                    txt = infile.read()
-            else:
-                with open(dandas_ledninger, "r") as infile:
-                    txt = infile.read()
+            txt = read_xml_with_declared_encoding(dandas_ledninger)
+
             txt = re.sub(r' xmlns="[^"]+"',"",txt)
             
             tree = ET.fromstring(txt)
@@ -965,8 +974,8 @@ class DDS2Tilbudsliste(object):
 class CopyMikeUrbanFeatures(object):
     def __init__(self):
         """Define the tool (tool name is the name of the class)."""
-        self.label = "2) Copy Features to MIKE Database (FileGDB / MIKE → MIKE)"
-        self.description = "2) Copy Features to MIKE Database (FileGDB / MIKE → MIKE)"
+        self.label = u"2) Copy Features to MIKE Database (FileGDB / MIKE → MIKE)" if arcgis_pro else u"2) Copy Features to MIKE Database (FileGDB / MIKE to MIKE)"
+        self.description = u"2) Copy Features to MIKE Database (FileGDB / MIKE → MIKE)" if arcgis_pro else u"2) Copy Features to MIKE Database (FileGDB / MIKE to MIKE)"
         self.canRunInBackground = False
 
     def getParameterInfo(self):
