@@ -1602,7 +1602,7 @@ class DisplaySqlitePro(object):
                 new_content = new_content.replace(full_match, new_select_clause)
 
             except Exception as e:
-                print(f"⚠️ Skipping table '{table_name}': {e}")
+                print(u"\u26A0 Skipping table '{}': {}".format(table_name, e))  # \u26A0 = ⚠
 
         new_content = replace_extent(new_content, xmin, ymin, xmax, ymax)
         new_content = re.sub(r'\s*"queryFields"\s*:\s*\[[^\]]*\],?', '', new_content, flags=re.DOTALL)
