@@ -197,7 +197,7 @@ class GetTerrainElevation(object):
             def confirm_assignment(num_points):
                 root = tk.Tk()
                 root.withdraw()  # Hide the main window
-                result = messagebox.askyesno("Confirm Assignment", f"Assign terrain elevation to {num_points} points?")
+                result = messagebox.askyesno("Confirm Assignment", "Assign terrain elevation to %d points?" % (num_points))
                 root.destroy()
                 return result
 
