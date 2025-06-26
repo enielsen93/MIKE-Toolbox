@@ -1451,8 +1451,8 @@ class DisplayMIKE1DResults(object):
             file_mod_times = [(file, os.path.getmtime(file)) for file in candidate_files]
 
             for i, (file, _) in enumerate(file_mod_times):
-                if ".gdb" in file and os.path.exists(os.path.join(file, "last_updated.text")):
-                    file_mod_times[i] = (file, os.path.getmtime(os.path.join(file, "last_updated.text")))
+                if ".gdb" in file and os.path.exists(os.path.join(file, "last_updated.txt")):
+                    file_mod_times[i] = (file, os.path.getmtime(os.path.join(file, "last_updated.txt")))
 
             sorted_files = sorted(file_mod_times, key=lambda x: x[1], reverse=True)
 
