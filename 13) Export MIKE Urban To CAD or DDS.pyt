@@ -13,6 +13,17 @@ import xml.dom.minidom
 import numpy as np
 import warnings
 
+if "mapping" in dir(arcpy):
+    arcgis_pro = False
+    import arcpy.mapping as arcpymapping
+    from arcpy.mapping import MapDocument as arcpyMapDocument
+    from arcpy._mapping import Layer
+    import pythonaddins
+else:
+    arcgis_pro = True
+    import arcpy.mp as arcpymapping
+    from arcpy.mp import ArcGISProject as arcpyMapDocument
+
 def getAvailableFilename(filepath, parent = None):
     parent = "F%s" % (parent) if parent and parent[0].isdigit() else None
     parent = os.path.basename(re.sub(r"\.[^\.\\]+$","", parent)).replace(".","_").replace("-","_").replace(" ","_").replace(",","_") if parent else None
@@ -829,7 +840,7 @@ class ExportToDUModelBuilder(object):
                 self.wallthickness = wallthickness
 
         pipe_catalogue = {}
-        with arcpy.da.SearchCursor(os.path.dirname(os.path.realpath(__file__)) + ur"\Data\ExportToCAD\Pipe Catalogue.dbf", ["Pipe_type", "Diameter", "WallThi"]) as cursor:
+        with arcpy.da.SearchCursor(os.path.dirname(os.path.realpath(__file__)) + r"\Data\ExportToCAD\Pipe Catalogue.dbf", ["Pipe_type", "Diameter", "WallThi"]) as cursor:
             for row in cursor:
                 pipe_catalogue[row[0]] = Pipe_type(row[1], row[2])
 
@@ -875,7 +886,7 @@ class ExportToDUModelBuilder(object):
         # layer = arcpy.mapping.Layer(msm_Link)    
         # arcpy.mapping.AddLayerToGroup(df, empty_group_layer, layer, "BOTTOM")
         for manhole_layer in [u"Wastewater Manhole.lyr", u"Rainwater Manhole.lyr", u"Combined Manhole.lyr"]:
-            addLayer(os.path.dirname(os.path.realpath(__file__)) + ur"\Data\ExportToCAD\%s" % manhole_layer,
+            addLayer(os.path.dirname(os.path.realpath(__file__)) + r"\Data\ExportToCAD\%s" % manhole_layer,
                      msm_Node, group=empty_group_layer, workspace_type = "FILEGDB_WORKSPACE")
 
         for pipe_layer in [u"Wastewater Pipe.lyr", "Rainwater Pipe.lyr", "Combined Pipe.lyr"]:
@@ -912,7 +923,7 @@ class ExportToDDS(object):
             datatype="GPFeatureLayer",
             parameterType="Optional",
             direction="Input")
-        
+
         msm_Link = arcpy.Parameter(
             displayName="Link Layers:",
             name="msm_Link",
@@ -995,7 +1006,7 @@ class ExportToDDS(object):
         #             and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)]]
         #     if links:
         #         parameters[1].value = links
-                    
+
         return
 
     def updateMessages(self, parameters):  # optional
@@ -1262,7 +1273,7 @@ class ExportToDDS(object):
                     except Exception as e:
                         arcpy.AddMessage("Error on catchment %s" % (catchment.muid))
                         arcpy.AddError(traceback.format_exc())
-                    
+
 
         if msm_Link:
             for link in links.values():
@@ -1317,11 +1328,23 @@ class ExportToDDS(object):
                     ET.SubElement(link_dds_part_label, 'YLabel').text = "%1.2f" % centroid.firstPoint.Y
 
         # Skriv XML-fil
-        with open(dandas_knuder, "w+") as f:
-            f.write(xml.dom.minidom.parseString(ET.tostring(node_root, encoding="UTF-8")).toprettyxml().encode("utf-8"))
+
+            if arcgis_pro:
+                with open(dandas_knuder, "w+", encoding = "utf-8") as f:
+                    f.write(xml.dom.minidom.parseString(ET.tostring(node_root, encoding="UTF-8")).toprettyxml())
+            else:
+                with open(dandas_knuder, "w+") as f:
+                    f.write(xml.dom.minidom.parseString(ET.tostring(node_root, encoding="UTF-8")).toprettyxml()).encode("utf-8")
+            arcpy.AddMessage(r"✅ Successfully wrote nodes XML file to path: %s" % (dandas_knuder))
 
         if msm_Link:
-            with open(dandas_ledninger, "w+") as f:
-                f.write(xml.dom.minidom.parseString(ET.tostring(link_root, encoding="UTF-8")).toprettyxml().encode("utf-8"))
+            if arcgis_pro:
+                with open(dandas_ledninger, "w+", encoding = "utf-8") as f:
+                    f.write(xml.dom.minidom.parseString(ET.tostring(link_root, encoding="UTF-8")).toprettyxml())
+            else:
+                with open(dandas_ledninger, "w+") as f:
+                    f.write(xml.dom.minidom.parseString(ET.tostring(link_root, encoding="UTF-8")).toprettyxml().encode("utf-8"))
+            arcpy.AddMessage(r"✅ Successfully wrote links XML file to path: %s" % (dandas_ledninger))
+
 
         
