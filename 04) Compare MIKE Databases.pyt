@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import arcpy
 import os
 import re
@@ -225,8 +226,8 @@ class CompareMikeModels(object):
             mxd = arcpy.mp.ArcGISProject("CURRENT")
             df = mxd.listMaps()[0]
         else:
-            mxd = arcpymapping.MapDocument("CURRENT")
-            df = arcpymapping.ArcGISProject("current").activeMap
+            mxd = arcpy.mapping.MapDocument("CURRENT")
+            df = arcpy.mapping.ListDataFrames(mxd)[0]
 
         def addLayer(layer_source, source, group=None, workspace_type="ACCESS_WORKSPACE"):
             layer = arcpy.mapping.Layer(layer_source)
@@ -612,8 +613,8 @@ class CompareMikeModelsLabels(object):
             mxd = arcpy.mp.ArcGISProject("CURRENT")
             df = mxd.listMaps()[0]
         else:
-            mxd = arcpymapping.MapDocument("CURRENT")
-            df = arcpymapping.ArcGISProject("current").activeMap
+            mxd = arcpy.mapping.MapDocument("CURRENT")
+            df = arcpy.mapping.ListDataFrames(mxd)[0]
 
         if arcgis_pro:
             # Load the .lyr file
@@ -690,13 +691,17 @@ class CompareMikeModelsLabels(object):
                 if link_id in links_db1:
                     geom1, diam1, material1, nettypeno1 = links_db1[link_id]
                     if diam1 != diam2 or material1 != material2:
-                        text = u"ø{}{}→ø{}{}".format(int(diam1 * 1000), renameMaterial(material1), int(diam2 * 1000), renameMaterial(material2))
+                        if arcgis_pro:
+                            text = u"ø{}{}→ø{}{}".format(int(diam1 * 1000), renameMaterial(material1), int(diam2 * 1000), renameMaterial(material2))
+                        else:
+                            text = u"oe{}{}->oe{}{}".format(int(diam1 * 1000), renameMaterial(material1),
+                                                         int(diam2 * 1000), renameMaterial(material2))
                         insert.insertRow((geom1, text, nettypeno1))
 
         # arcpy.AddMessage("✅ Done. Output saved to: %s" % links_output_filepath)
         # arcpy.AddMessage(links_output_filepath)
-        addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\CompareMIKEModels_Links.lyrx",
-                links_output_filepath, group=empty_group_layer, workspace_type = "FILEGDB")
+        addLayer(os.path.dirname(os.path.realpath(__file__)) + r"\Data\CompareMIKEModels_Links.lyr",
+                links_output_filepath, group=empty_group_layer, workspace_type="FILEGDB" if arcgis_pro else "FILEGDB_WORKSPACE")
 
         # --- Compare msm_Node invert levels ---
         node_fc_name = "msm_Node"
@@ -737,14 +742,15 @@ class CompareMikeModelsLabels(object):
                     if diameter2 != diameter1:
                         if text:
                             text += "\n"
-                        text += "D: ø{:.0f}→ø{:.0f}".format(diameter1 * 1e3, diameter2 * 1e3)
+                        text += u"D: ø{:.0f}→ø{:.0f}".format(diameter1 * 1e3, diameter2 * 1e3)
                     if len(text)>0:
                         insert.insertRow((geom1, text))
 
 
-        arcpy.AddMessage("✅ Done. Node changes saved to: %s" % nodes_output_filepath)
-        addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\CompareMIKEModels_Nodes.lyrx",
-                 nodes_output_filepath, group=empty_group_layer, workspace_type="FILEGDB")
+        if arcgis_pro:
+            arcpy.AddMessage("✅ Done. Node changes saved to: %s" % nodes_output_filepath)
+        addLayer(os.path.dirname(os.path.realpath(__file__)) + r"\Data\CompareMIKEModels_Nodes.lyr",
+                 nodes_output_filepath, group=empty_group_layer, workspace_type="FILEGDB" if arcgis_pro else "FILEGDB_WORKSPACE")
 
         # def addLayer(layer_source, source, group=None, workspace_type="ACCESS_WORKSPACE", new_name=None,
         #              definition_query=None):
