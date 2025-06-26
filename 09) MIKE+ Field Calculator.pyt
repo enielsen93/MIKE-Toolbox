@@ -71,11 +71,27 @@ class FieldCalculator(object):
 
     def updateParameters(self, parameters):
         if not parameters[0].Value:
-            mxd = arcpy.mapping.MapDocument("CURRENT")
-            featureclasses = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
-                     lyr.getSelectionSet() and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)]]
-            if featureclasses:
-                parameters[0].value = "; ".join([featureclass for featureclass in featureclasses])
+            if arcgis_pro:
+                # Reference the active map in the current project
+                aprx = arcpymapping.ArcGISProject("CURRENT")
+                map_view = aprx.activeMap
+
+                if not parameters[0].value:
+                    # List layers with selected features
+                    layers = []
+                    for layer in map_view.listLayers():
+                        try:
+                            if layer.getSelectionSet():
+                                layers.append(layer.longName)
+                        except:
+                            pass
+                    parameters[0].value = "; ".join(layers)
+            else:
+                mxd = arcpy.mapping.MapDocument("CURRENT")
+                featureclasses = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
+                         lyr.getSelectionSet() and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)]]
+                if featureclasses:
+                    parameters[0].value = "; ".join([featureclass for featureclass in featureclasses])
         if parameters[0].Value and not parameters[1].Value:
             parameters[1].filter.list = [f.name for f in arcpy.Describe(parameters[0].ValueAsText.split(";")[0]).fields]
 
