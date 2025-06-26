@@ -340,7 +340,7 @@ class DisplayMikeUrban(object):
 
             if "msm_Node" in source:
                 for label_class in (update_layer.listLabelClasses() if arcgis_pro else update_layer.labelClasses):
-                    if show_depth:
+                    if show_depth and not "D:" in label_class.expression:
                         label_class.expression = label_class.expression.replace("return labelstr",
                                                                                 'if [GroundLevel] and [InvertLevel]: labelstr += "\\nD:%1.2f" % ( convertToFloat([GroundLevel]) - convertToFloat([InvertLevel]) )\r\n  return labelstr')
 
