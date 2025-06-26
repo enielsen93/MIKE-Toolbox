@@ -664,7 +664,12 @@ class Dandas2MULinks(object):
                                                         
 
         # arcpy.AddMessage((os.path.dirname(os.path.realpath(__file__)) + "\Data\msm_Node.lyr", msm_Node, empty_group_layer, 'FILEGDB_WORKSPACE'))
-        addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\msm_Node.lyr", msm_Node, empty_group_layer, 'FILEGDB_WORKSPACE')
+        msm_Node_layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\msm_Node.lyr", msm_Node, empty_group_layer, 'FILEGDB_WORKSPACE')
+        for label_class in (msm_Node_layer.listLabelClasses() if arcgis_pro else msm_Node_layer.labelClasses):
+            if not "D:" in label_class.expression:
+                label_class.expression = label_class.expression.replace("return labelstr",
+                                                                        'if [GroundLevel] and [InvertLevel]: labelstr += "\\nD:%1.2f" % ( convertToFloat([GroundLevel]) - convertToFloat([InvertLevel]) )\r\n  return labelstr')
+
         
         if dandas_ledninger:
             # addLayer = arcpy.mapping.Layer(msm_Link)
