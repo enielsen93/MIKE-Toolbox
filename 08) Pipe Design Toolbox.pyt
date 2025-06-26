@@ -23,13 +23,15 @@ if "mapping" in dir(arcpy):
     import arcpy.mapping as arcpymapping
     from arcpy.mapping import MapDocument as arcpyMapDocument
     import pythonaddins
+
+    mikeio1d_installed = False
+
 else:
     arcgis_pro = True
     import arcpy.mp as arcpymapping
     from arcpy.mp import ArcGISProject as arcpyMapDocument
-
-import importlib.util
-mikeio1d_installed = importlib.util.find_spec("mikeio1d") is not None
+    import importlib.util
+    mikeio1d_installed = importlib.util.find_spec("mikeio1d") is not None
 
 import mikegraph
 import sqlite3
@@ -3225,13 +3227,14 @@ class DrawLongitudinalProfiles(object):
                             temp_jpg = temp_png + ".jpg"
                             rgb_img.save(temp_jpg, 'JPEG', quality=65, optimize=True)
 
-                        arcpy.AddMessage(temp_jpg)
+                        # arcpy.AddMessage(temp_jpg)
                         img = mpimg.imread(temp_jpg)
                         map_ax.imshow(img)
                         map_ax.axis('off')
 
                     # save & close
                     pdf.savefig(fig)
+                    plt.savefig("C:\Papirkurv\%s-%s.svg" % (path[0], path[-1]), format = "svg", transparent = True)
                     # if path_i>2:
                     #     break
                     # plt.close(fig)
