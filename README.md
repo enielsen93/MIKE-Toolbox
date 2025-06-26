@@ -1,6 +1,6 @@
-# MIKE Urban Tools
+# MIKE Toolbox
 
-**A set of tools for DHI MIKE Urban, designed for use with ArcGIS.**
+**A set of tools for DHI MIKE Urban and MIKE+, designed for use with ArcMap and ArcGIS Pro.**
 
 ## Getting Started
 These instructions will guide you through installing and using MIKE Urban Tools.
