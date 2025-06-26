@@ -1399,7 +1399,7 @@ class CopyMuppTemplate(object):
                     )
                 ]
 
-                rows = [r[:7] + (r[7].encode('cp1252'),) for r in rows]
+                rows = [r[:7] + (r[7],) for r in rows]
 
                 # First delete any existing rows with same tablename and fieldname
                 for row in rows:
@@ -1475,8 +1475,7 @@ class DisplaySqlitePro(object):
         features_to_display.filter.list = ["Basins", "Network Loads",
                                            "Boundary Water Levels", "Control Actions",
                                            "Annotations"]
-        features_to_display.value = ["Network Loads",
-                                     "Boundary Water Levels"]
+        features_to_display.value = []
 
         sql_query = arcpy.Parameter(
             displayName="Set as Definition Query for layers",
@@ -1562,8 +1561,6 @@ class DisplaySqlitePro(object):
         new_content = re.sub(pattern, replacement, content)
         new_content = new_content.replace("!replace!", MU_database.replace("\\", "\\\\"))
 
-        new_content = new_content.replace(", label", "")
-
         #Replace Extent
 
         def replace_extent(text, xmin, ymin, xmax, ymax):
@@ -1585,10 +1582,35 @@ class DisplaySqlitePro(object):
             new_text = re.sub(pattern, replacer, text, flags=re.MULTILINE)
             return new_text
 
-        new_content = replace_extent(new_content, xmin, ymin, xmax, ymax)
 
-        pattern = r""",?\s*\{\s*"name"\s*:\s*"label"\s*,.*?\}"""
-        new_content = re.sub(pattern, "", new_content, flags=re.DOTALL)
+        # SETTING THE SQL QUERY TO THE FIELDS FOUND IN THE DATABASE - THEY VARY A LOT BETWEEN MIKE+ VERSIONS
+        pattern = r'select\s+(.+?)\s+from\s+([\w.]+)'
+        matches = re.finditer(pattern, new_content, re.IGNORECASE)
+
+        for match in matches:
+            full_match = match.group(0)
+            field_str = match.group(1)
+            table_name = match.group(2)
+
+            try:
+                table_path = os.path.join(MU_database, table_name)
+                fields = [f.name for f in arcpy.ListFields(table_path)]
+                new_field_str = ", ".join(fields)
+
+                # Replace only this specific SELECT clause
+                new_select_clause = "select {} from {}".format(new_field_str, table_name)
+                new_content = new_content.replace(full_match, new_select_clause)
+
+            except Exception as e:
+                print(f"⚠️ Skipping table '{table_name}': {e}")
+
+        new_content = replace_extent(new_content, xmin, ymin, xmax, ymax)
+        new_content = re.sub(r'\s*"queryFields"\s*:\s*\[[^\]]*\],?', '', new_content, flags=re.DOTALL)
+
+        # for field in ["label", "enabled", "speclocalwaveno", "waveapproximationtypeno", "useroutingno", "routingtypeno", "routingdelay", "routingshape"/]:
+        #     new_content = new_content.replace(", %s" % field, "")
+        #     pattern = r""",?\s*\{\s*"name"\s*:\s*"%s"\s*,.*?\}""" % field
+        #     new_content = re.sub(pattern, "", new_content, flags=re.DOTALL)
 
         temp_dir = tempfile.gettempdir()
 
@@ -2144,123 +2166,124 @@ class DisplaySqlitePro(object):
             addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\Catchment Connections.lyr",
                      msm_CatchCon, group=empty_group_layer)
 
-        if "Catchments" in features_to_display:
-            printStepAndTime("Adding catchments to map")
-            if join_catchments:
-                arcpy.SetProgressor("default", "Joining ms_Catchment and msm_HModA and adding catchments to map")
-                ms_Catchment = arcpy.CopyFeatures_management(ms_Catchment, getAvailableFilename(
-                    arcpy.env.scratchGDB + "\ms_CatchmentImp", parent=MU_database)).getOutput(0)
-                arcpy.management.RepairGeometry(ms_Catchment, delete_null="DELETE_NULL")
+        printStepAndTime("Adding catchments to map")
+        if join_catchments:
+            arcpy.AddMessage("BRO")
+            arcpy.SetProgressor("default", "Joining ms_Catchment and msm_HModA and adding catchments to map")
+            ms_Catchment = arcpy.CopyFeatures_management(ms_Catchment, getAvailableFilename(
+                arcpy.env.scratchGDB + "\ms_CatchmentImp", parent=MU_database)).getOutput(0)
+            arcpy.management.RepairGeometry(ms_Catchment, delete_null="DELETE_NULL")
 
-                # arcpy.JoinField_management(in_data=ms_Catchment, in_field="MUID", join_table=MU_database + r"\msm_HModA", join_field="CatchID", fields="ImpArea")
+            # arcpy.JoinField_management(in_data=ms_Catchment, in_field="MUID", join_table=MU_database + r"\msm_HModA", join_field="CatchID", fields="ImpArea")
 
-                arcpy.management.AddField(ms_Catchment, "ImpArea", "FLOAT")
-                arcpy.management.AddField(ms_Catchment, "ParAID", "TEXT")
-                arcpy.management.AddField(ms_Catchment, "RedFactor", "FLOAT")
-                arcpy.management.AddField(ms_Catchment, "ConcTime", "FLOAT")
-                arcpy.management.AddField(ms_Catchment, "InitLoss", "FLOAT")
-                arcpy.management.AddField(ms_Catchment, "NodeID", "TEXT")
-                arcpy.management.AddField(ms_Catchment, "NodeNT", "SHORT")
+            arcpy.management.AddField(ms_Catchment, "ImpArea", "FLOAT")
+            arcpy.management.AddField(ms_Catchment, "ParAID", "TEXT")
+            arcpy.management.AddField(ms_Catchment, "RedFactor", "FLOAT")
+            arcpy.management.AddField(ms_Catchment, "ConcTime", "FLOAT")
+            arcpy.management.AddField(ms_Catchment, "InitLoss", "FLOAT")
+            arcpy.management.AddField(ms_Catchment, "NodeID", "TEXT")
+            arcpy.management.AddField(ms_Catchment, "NodeNT", "SHORT")
 
-                class HParA:
-                    reduction_factor = None
-                    concentration_time = None
-                    initial_loss = None
+            class HParA:
+                reduction_factor = None
+                concentration_time = None
+                initial_loss = None
 
-                hParA_dict = {}
-                with arcpy.da.SearchCursor(MU_database + r"\msm_HParA",
-                                           ["MUID", "RedFactor", "ConcTime", "InitLoss"]) as cursor:
-                    for row in cursor:
-                        hParA_dict[row[0]] = HParA()
-                        hParA_dict[row[0]].reduction_factor = row[1]
-                        hParA_dict[row[0]].concentration_time = row[2]
-                        hParA_dict[row[0]].initial_loss = row[3]
-
-                catchments_dict = {}
-
-                class Catchment:
-                    imperviousness = None
-                    local_parameters = None
-                    ParAID = None
-                    reduction_factor = None
-                    concentration_time = None
-                    initial_loss = None
-                    node_ID = None
-                    node_id_net_type_no = None
-
-                if "mdb" in MU_database:
-                    cursor = arcpy.da.SearchCursor(MU_database + r"\msm_HModA",
-                                                   ["CatchID", "ImpArea", "ParAID", "LocalNo", "RFactor", "ConcTime",
-                                                    "ILoss"])
-                else:
-                    cursor = arcpy.da.SearchCursor(ms_Catchment,
-                                                   ["muid", "modelaimparea", "modelaparaid", "modelalocalno",
-                                                    "modelarfactor", "modelaconctime",
-                                                    "modelailoss"])
-
+            hParA_dict = {}
+            with arcpy.da.SearchCursor(MU_database + r"\msm_HParA",
+                                       ["MUID", "RedFactor", "ConcTime", "InitLoss"]) as cursor:
                 for row in cursor:
-                    # try:
-                    catchments_dict[row[0]] = Catchment()
-                    catchments_dict[row[0]].local_parameters = row[3] if "mdb" in MU_database else 1 - row[3]
-                    catchments_dict[row[0]].imperviousness = row[1]
-                    catchments_dict[row[0]].ParAID = row[2] if not catchments_dict[row[0]].local_parameters else ""
-                    if catchments_dict[row[0]].local_parameters or row[2] in hParA_dict:
-                        catchments_dict[row[0]].reduction_factor = (hParA_dict[row[2]].reduction_factor
-                                                                    if not catchments_dict[row[0]].local_parameters else
-                                                                    row[4])
-                        catchments_dict[row[0]].concentration_time = (hParA_dict[row[2]].concentration_time
-                                                                      if not catchments_dict[
-                            row[0]].local_parameters else row[5])
-                        catchments_dict[row[0]].initial_loss = (hParA_dict[row[2]].initial_loss
+                    hParA_dict[row[0]] = HParA()
+                    hParA_dict[row[0]].reduction_factor = row[1]
+                    hParA_dict[row[0]].concentration_time = row[2]
+                    hParA_dict[row[0]].initial_loss = row[3]
+
+            catchments_dict = {}
+
+            class Catchment:
+                imperviousness = None
+                local_parameters = None
+                ParAID = None
+                reduction_factor = None
+                concentration_time = None
+                initial_loss = None
+                node_ID = None
+                node_id_net_type_no = None
+
+            if "mdb" in MU_database:
+                cursor = arcpy.da.SearchCursor(MU_database + r"\msm_HModA",
+                                               ["CatchID", "ImpArea", "ParAID", "LocalNo", "RFactor", "ConcTime",
+                                                "ILoss"])
+            else:
+                cursor = arcpy.da.SearchCursor(ms_Catchment,
+                                               ["muid", "modelaimparea", "modelaparaid", "modelalocalno",
+                                                "modelarfactor", "modelaconctime",
+                                                "modelailoss"])
+
+            for row in cursor:
+                # try:
+                catchments_dict[row[0]] = Catchment()
+                catchments_dict[row[0]].local_parameters = row[3] if "mdb" in MU_database else 1 - row[3]
+                catchments_dict[row[0]].imperviousness = row[1]
+                catchments_dict[row[0]].ParAID = row[2] if not catchments_dict[row[0]].local_parameters else ""
+                if catchments_dict[row[0]].local_parameters or row[2] in hParA_dict:
+                    catchments_dict[row[0]].reduction_factor = (hParA_dict[row[2]].reduction_factor
                                                                 if not catchments_dict[row[0]].local_parameters else
-                                                                row[6])
+                                                                row[4])
+                    catchments_dict[row[0]].concentration_time = (hParA_dict[row[2]].concentration_time
+                                                                  if not catchments_dict[
+                        row[0]].local_parameters else row[5])
+                    catchments_dict[row[0]].initial_loss = (hParA_dict[row[2]].initial_loss
+                                                            if not catchments_dict[row[0]].local_parameters else
+                                                            row[6])
+                else:
+                    arcpy.AddWarning("%s not in msm_HParA" % row[2])
+                # arcpy.AddMessage((catchments_dict[row[0]].ParAID, catchments_dict[row[0]], catchments_dict[row[0]].local_parameters))
+            # except Exception as e:
+            #     catchments_dict[row[0]].concentration_time = 7
+            #     catchments_dict[row[0]].reduction_factor = 0
+            #     arcpy.AddWarning("%s not found in msm_HParA" % (row[2]))
+            #     arcpy.AddWarning(e)
+
+            del cursor
+
+            nodes_net_type_no = {row[0]: row[1] for row in arcpy.da.SearchCursor(msm_Node, ["MUID", "NetTypeNo"])}
+
+            with arcpy.da.SearchCursor(os.path.join(MU_database, "msm_CatchCon"), ["CatchID", "NodeID"]) as cursor:
+                for row in cursor:
+                    if row[0] in catchments_dict:
+                        catchments_dict[row[0]].node_ID = row[1]
+
+                        if row[1] in nodes_net_type_no:
+                            catchments_dict[row[0]].node_id_net_type_no = nodes_net_type_no[row[1]]
                     else:
-                        arcpy.AddWarning("%s not in msm_HParA" % row[2])
-                    # arcpy.AddMessage((catchments_dict[row[0]].ParAID, catchments_dict[row[0]], catchments_dict[row[0]].local_parameters))
-                # except Exception as e:
-                #     catchments_dict[row[0]].concentration_time = 7
-                #     catchments_dict[row[0]].reduction_factor = 0
-                #     arcpy.AddWarning("%s not found in msm_HParA" % (row[2]))
-                #     arcpy.AddWarning(e)
+                        arcpy.AddWarning(
+                            "Catchment connection registers connection to nonexisting catchment %s" % row[0])
 
-                del cursor
+            with arcpy.da.UpdateCursor(ms_Catchment,
+                                       ["MUID", "ImpArea", "ParAID", "RedFactor", "ConcTime", "InitLoss", "NodeID",
+                                        "NodeNT"]) as cursor:
+                for row in cursor:
+                    try:
+                        catchment = catchments_dict[row[0]]
+                    except Exception as e:
+                        arcpy.AddWarning("Could not find catchment %s in msm_HModA" % (row[0]))
+                    else:
+                        row[1] = catchment.imperviousness * 1e2
+                        row[2] = catchment.ParAID
+                        row[3] = catchment.reduction_factor
+                        row[4] = catchment.concentration_time
+                        row[5] = catchment.initial_loss
+                        row[6] = catchment.node_ID
+                        row[7] = catchment.node_id_net_type_no
+                        cursor.updateRow(row)
 
-                nodes_net_type_no = {row[0]: row[1] for row in arcpy.da.SearchCursor(msm_Node, ["MUID", "NetTypeNo"])}
+            # arcpy.JoinField_management(in_data=ms_Catchment, in_field="MUID", join_table=MU_database + r"\msm_CatchCon", join_field="CatchID", fields="NodeID")
+            # arcpy.management.AddField(ms_Catchment, "RedFactor", field_type = "FLOAT")
 
-                with arcpy.da.SearchCursor(os.path.join(MU_database, "msm_CatchCon"), ["CatchID", "NodeID"]) as cursor:
-                    for row in cursor:
-                        if row[0] in catchments_dict:
-                            catchments_dict[row[0]].node_ID = row[1]
+            update_layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\Catchments W Imp Area.lyr",
+                     ms_Catchment, group=empty_group_layer, workspace_type="FILEGDB_WORKSPACE")
 
-                            if row[1] in nodes_net_type_no:
-                                catchments_dict[row[0]].node_id_net_type_no = nodes_net_type_no[row[1]]
-                        else:
-                            arcpy.AddWarning(
-                                "Catchment connection registers connection to nonexisting catchment %s" % row[0])
-
-                with arcpy.da.UpdateCursor(ms_Catchment,
-                                           ["MUID", "ImpArea", "ParAID", "RedFactor", "ConcTime", "InitLoss", "NodeID",
-                                            "NodeNT"]) as cursor:
-                    for row in cursor:
-                        try:
-                            catchment = catchments_dict[row[0]]
-                        except Exception as e:
-                            arcpy.AddWarning("Could not find catchment %s in msm_HModA" % (row[0]))
-                        else:
-                            row[1] = catchment.imperviousness * 1e2
-                            row[2] = catchment.ParAID
-                            row[3] = catchment.reduction_factor
-                            row[4] = catchment.concentration_time
-                            row[5] = catchment.initial_loss
-                            row[6] = catchment.node_ID
-                            row[7] = catchment.node_id_net_type_no
-                            cursor.updateRow(row)
-
-                # arcpy.JoinField_management(in_data=ms_Catchment, in_field="MUID", join_table=MU_database + r"\msm_CatchCon", join_field="CatchID", fields="NodeID")
-                # arcpy.management.AddField(ms_Catchment, "RedFactor", field_type = "FLOAT")
-
-                addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\Catchments W Imp Area.lyr",
-                         ms_Catchment, group=empty_group_layer, workspace_type="FILEGDB_WORKSPACE")
 
 
         if "Control Actions" in features_to_display:
