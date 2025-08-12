@@ -7,6 +7,7 @@ import cProfile
 from alive_progress import alive_bar
 import math
 import warnings
+import datetime
 from scipy.optimize import bisect
 
 if len(sys.argv)>1:
@@ -15,8 +16,8 @@ else:
     extension = ""
     # MU_model = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Fredensvang\MIKE\FRE_005\FRE_005.sqlite"
     # res1d_file = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Fredensvang\MIKE\FRE_005\FRE_005_m1d - Result Files\FRE_005_CDS5_156_240_valideringBaseDefault_Network_HD.res1d"
-    # MU_model = r"C:\Users\elnn\OyneDrive - Ramboll\Documents\Aarhus Vand\Hasle Torv\MIKE_URBAN\HAT_055\delete\HAT_055.sqlite"
-    res1d_file = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Jyllands Alle\MIKE_REGNVAND\JYL_072\JYL_072_m1d - Result Files\JYL_072_CDS_5_132_240_2080BaseResult_file.res1d"
+    MU_model = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Jyllands Alle\MIKE_REGNVAND\JYL_069\JYL_069_2mbredde.sqlite"
+    res1d_file = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Jyllands Alle\MIKE_REGNVAND\JYL_069\JYL_069_2mbredde_m1d - Result Files\JYL_069_LTS_2000_2000BaseResult_file.res1d"
 
 if not 'MU_model' in locals(): # Guessing where MIKE+ database is. Write path of MIKE-model above if not correct
     model_folder = os.path.dirname(os.path.dirname(res1d_file))
@@ -42,7 +43,7 @@ if "hat" in res1d_file.lower():
 if "jjv" in res1d_file.lower():
     filter_to_extent = [570066, 6218716, 571300, 6219756] # JJV
 if "son" in res1d_file.lower():
-    filter_to_extent = [571590, 6219471, 572939, 6220501]
+    filter_to_extent = [571226, 6219654, 572333, 6220694]
 
 if filter_to_extent:
     print("Skipping all reaches and nodes outside extent %s" % filter_to_extent)
@@ -355,7 +356,6 @@ def read_res1d():
                 for field in fields:
                     if field not in existing_fields:
                         arcpy.management.AddField(nodes_output_filepath, field, "FLOAT")
-
             else:
                 nodes_output_filepath = arcpy.CreateFeatureclass_management(gdb_path, nodes_new_filename, "POINT")[0]
                 arcpy.management.AddField(nodes_output_filepath, "MUID", "TEXT")
@@ -365,7 +365,7 @@ def read_res1d():
                 # arcpy.management.AddField(nodes_output_filepath, field, "FLOAT", 8, 2)
                 arcpy.management.AddFields(nodes_output_filepath, [[field, "FLOAT"] for field in fields])
 
-            fields = ["Diameter", "MaxQ", "SumQ", "Up_MaxE", "Dw_MaxE", "EndQ", "MinQ", "MaxV", "FillDeg", "EnergyGr", "FrictionLo",
+            fields = ["Diameter", "MaxQ", "SumQ", "EndQ", "MinQ", "MaxV", "FillDeg", "EnergyGr", "FrictionLo",
                               "MaxTau", "Depthdiff"]
             if arcpy.Exists(links_output_filepath):
                 arcpy.DeleteFeatures_management(links_output_filepath)
@@ -374,12 +374,30 @@ def read_res1d():
                 for field in fields:
                     if field not in existing_fields:
                         arcpy.management.AddField(links_output_filepath, field, "FLOAT")
-
             else:
                 links_output_filepath = arcpy.CreateFeatureclass_management(gdb_path, links_new_filename, "POLYLINE")[0]
                 arcpy.management.AddField(links_output_filepath, "MUID", "TEXT")
                 arcpy.management.AddField(links_output_filepath, "NetTypeNo", "SHORT")
+                arcpy.management.AddField(links_output_filepath, "FromNode", "TEXT")
+                arcpy.management.AddField(links_output_filepath, "ToNode", "TEXT")
                 arcpy.management.AddFields(links_output_filepath, [[field, "FLOAT"] for field in fields])
+
+            # Adding metadata
+            metadata_tablename = "Metadata"
+            if arcpy.Exists(os.path.join(gdb_path, metadata_tablename)):
+                try:
+                    arcpy.management.DeleteFeatures(os.path.join(gdb_path, metadata_tablename))
+                except:
+                    pass
+            else:
+                metadata_filepath = arcpy.management.CreateTable(gdb_path, metadata_tablename)[0]
+                arcpy.management.AddField(metadata_filepath, "res1d_path", "TEXT", field_length=500)
+                arcpy.management.AddField(metadata_filepath, "simulation_date", "DATE")
+                arcpy.management.AddField(metadata_filepath, "result_analysis_date", "DATE")
+
+            with arcpy.da.InsertCursor(os.path.join(gdb_path, metadata_tablename), ["res1d_path", "simulation_date", "result_analysis_date"]) as cursor:
+                cursor.insertRow([res1d_file, datetime.datetime.fromtimestamp(os.path.getmtime(res1d_file)), datetime.datetime.now()])
+
 
             break
         except arcpy.ExecuteError as e:
@@ -393,46 +411,68 @@ def read_res1d():
         # return q_div_qf
         return q_div_qf - max_discharge / full_discharge
 
+    for reach in res1d.reaches.values():
+        if reach.group == "Reach":
+            reach_quantities = reach.quantities
+
     timeseries = [time.timestamp() for time in df.time_index]
     print("Reading and writing Reach Results")
     with alive_bar(len(reaches), force_tty=True) as bar:
-        with arcpy.da.InsertCursor(links_output_filepath, ["SHAPE@", "MUID", "Diameter", "MaxQ", "SumQ", "NetTypeNo", "EndQ", "MinQ", "MaxV", "EnergyGr", "FrictionLo", "FillDeg", "MaxTau", "Depthdiff", "Up_MaxE", "Dw_MaxE"]) as cursor:
+        with arcpy.da.InsertCursor(links_output_filepath, ["SHAPE@", "MUID", "Diameter", "FromNode", "ToNode", "MaxQ", "SumQ", "NetTypeNo", "EndQ", "MinQ", "MaxV", "EnergyGr", "FrictionLo", "FillDeg", "MaxTau", "Depthdiff"]) as cursor:
             for muid in set(reaches.keys()):
                 reach = reaches[muid]
                 if not reach.skip:
-                    try:
-                        queries = [QueryDataReach("Discharge", muid, reach.length), QueryDataReach("FlowVelocity", muid, reach.length),
-                                   QueryDataReach("WaterLevel", muid, 0), QueryDataReach("WaterLevel", muid, reach.length)]
+                    if muid in res1d.reaches.keys():
+                        queries = []
+                        query_labels = []
+                        for quantity in ["Discharge" , "FlowVelocity", "WaterLevel"]:
+                            if quantity in reach_quantities:
+                                if quantity == "WaterLevel":
+                                    queries.append(QueryDataReach(quantity, muid, 0))
+                                    query_labels.append("WaterLevel_start")
+                                    queries.append(QueryDataReach(quantity, muid, reach.length))
+                                    query_labels.append("WaterLevel_end")
+                                else:
+                                    queries.append(QueryDataReach(quantity, muid, reach.length))
+                                    query_labels.append(quantity)
+
                         query_result = res1d.read(queries)
-                        reach_discharge = query_result.iloc[:,0]
-                        reach.max_discharge = np.max(abs(reach_discharge))
-                        reach.min_discharge = np.min(reach_discharge)
-                        reach.sum_discharge = np.trapz(abs(reach_discharge), timeseries)
-                        reach.end_discharge = np.round((abs(reach_discharge[-1])),2)
-                        reach.max_flow_velocity = np.max(abs(query_result.iloc[:,1]))
-                        reach_start_values = query_result.iloc[:,2]
-                        reach_end_values = query_result.iloc[:,3]
-                        reach.min_start_water_level = np.min(abs(reach_start_values))
-                        reach.min_end_water_level = np.min(abs(reach_end_values))
-                        reach.max_start_water_level = np.max(abs(reach_start_values))
-                        reach.max_end_water_level = np.max(abs(reach_end_values))
+                        query_result.columns = query_labels
+                        # reach_discharge = query_result.iloc[:,0]
+                        if "Discharge" in reach_quantities:
+                            reach.max_discharge = np.max(abs(query_result["Discharge"]))
+                            reach.min_discharge = np.min(query_result["Discharge"])
+                            reach.sum_discharge = np.trapz(abs(query_result["Discharge"]), timeseries)
+                            reach.end_discharge = np.round((abs(query_result["Discharge"][-1])),2)
+                        if "FlowVelocity" in reach_quantities:
+                            reach.max_flow_velocity = np.max(abs(query_result["FlowVelocity"]))
+                        if "WaterLevel" in reach_quantities:
+                            reach_start_values = query_result["WaterLevel_start"]
+                            reach_end_values = query_result["WaterLevel_end"]
+                            reach.min_start_water_level = np.min(abs(reach_start_values))
+                            reach.min_end_water_level = np.min(abs(reach_end_values))
+                            reach.max_start_water_level = np.max(abs(reach_start_values))
+                            reach.max_end_water_level = np.max(abs(reach_end_values))
 
                         # Calculate tau
-                        full_discharge = reach.QFull
-                        if reach.max_discharge < full_discharge:
-                            water_level = bisect(bretting, 0, reach.diameter, args = (reach.max_discharge, full_discharge, reach.diameter), xtol = 0.002, maxiter = 100)
-                            radius = reach.diameter/2
-                            theta = 2 * math.acos((radius - water_level) / radius)
-                            if water_level < radius / 2:
-                                wet_perimeter = radius*theta
-                                wet_area = (radius**2*(theta-math.sin(theta)))/2
+                        try:
+                            full_discharge = reach.QFull
+                            if reach.max_discharge < full_discharge:
+                                water_level = bisect(bretting, 0, reach.diameter, args = (reach.max_discharge, full_discharge, reach.diameter), xtol = 0.002, maxiter = 100)
+                                radius = reach.diameter/2
+                                theta = 2 * math.acos((radius - water_level) / radius)
+                                if water_level < radius / 2:
+                                    wet_perimeter = radius*theta
+                                    wet_area = (radius**2*(theta-math.sin(theta)))/2
+                                else:
+                                    wet_perimeter = 2*np.pi*radius - radius*theta
+                                    wet_area = np.pi * radius**2 - (radius**2*(theta-math.sin(theta)))/2
+                                hydraulic_radius = wet_area / wet_perimeter
+                                reach.tau = 999.7 * 9.81 * reach.slope * hydraulic_radius
                             else:
-                                wet_perimeter = 2*np.pi*radius - radius*theta
-                                wet_area = np.pi * radius**2 - (radius**2*(theta-math.sin(theta)))/2
-                            hydraulic_radius = wet_area / wet_perimeter
-                            reach.tau = 999.7 * 9.81 * reach.slope * hydraulic_radius
-                        else:
-                            reach.tau = 1e3
+                                reach.tau = 1e3
+                        except Exception as e:
+                            pass
 
                         # Calculate Depth Difference
                         if reach.fromnode in df.nodes and reach.tonode in df.nodes:
@@ -441,19 +481,18 @@ def read_res1d():
 
                     # print(water_level)
 
-                    except Exception as e:
-                        if muid in res1d.structures.keys():
-                            try:
-                                queries = [QueryDataStructure("Discharge", muid)]
-                                query_result = res1d.read(queries)
-                                reach_discharge = query_result.iloc[:, 0]
-                                reach.max_discharge = np.max(abs(reach_discharge))
-                                reach.min_discharge = np.min(reach_discharge)
-                                reach.sum_discharge = np.trapz(abs(reach_discharge), timeseries)
-                                reach.end_discharge = np.round(abs(reach_discharge[-1]),4)
+                    elif muid in res1d.structures.keys():
+                        try:
+                            queries = [QueryDataStructure("Discharge", muid)]
+                            query_result = res1d.read(queries)
+                            reach_discharge = query_result.iloc[:, 0]
+                            reach.max_discharge = np.max(abs(reach_discharge))
+                            reach.min_discharge = np.min(reach_discharge)
+                            reach.sum_discharge = np.trapz(abs(reach_discharge), timeseries)
+                            reach.end_discharge = np.round(abs(reach_discharge[-1]),4)
 
-                            except Exception as e:
-                                warnings.warn("Failed to get discharge from %s" % (muid))
+                        except Exception as e:
+                            warnings.warn("Failed to get discharge from %s" % (muid))
 
                     # if True:
                     if all((reach.min_start_water_level, reach.min_end_water_level, reach.max_start_water_level, reach.max_end_water_level)):
@@ -462,10 +501,10 @@ def read_res1d():
                     else:
                         energy_line_gradient = 0
                         friction_loss = 0
-                    cursor.insertRow([reach.shape, muid, reach.diameter or 0, reach.max_discharge or 0, reach.sum_discharge or 0,
+                    cursor.insertRow([reach.shape, muid, reach.diameter if reach.diameter and reach.diameter>0 else 0, reach.fromnode, reach.tonode, reach.max_discharge or 0, reach.sum_discharge or 0,
                                   reach.net_type_no or 0, reach.end_discharge or 0,
                                       reach.min_discharge or 0, reach.max_flow_velocity or 0,
-                                      energy_line_gradient, friction_loss, reach.fill_degree or 0, reach.tau or 0, reach.depth_difference or 0, reach.max_start_water_level or 0, reach.max_end_water_level or 0])
+                                      energy_line_gradient, friction_loss, reach.fill_degree or 0, reach.tau or 0, reach.depth_difference or 0])
                 bar()
     res1d_quantities = res1d.quantities
 
@@ -528,10 +567,6 @@ def read_res1d():
                             diverted_runoff_to_surface = query_result.iloc[:, 0]
                             surcharge += np.trapz(diverted_runoff_to_surface, timeseries)
                             surcharge_balance += np.trapz(diverted_runoff_to_surface, timeseries)
-                            if muid == "D24102R":
-                                import matplotlib.pyplot as plt
-                                plt.plot(diverted_runoff_to_surface)
-                                print("BOB")
                             # if surcharge>0://
                             #     plt.plot(timeseries,query_result.iloc[:, 0])
                             # max_surcharge += np.trapz(query_result.iloc[:, 0], timeseries)
@@ -572,15 +607,13 @@ def read_res1d():
 
     # writing Last Modified time to the file
     timestamp_file = os.path.join(gdb_path, "last_updated.txt")
-    import datetime
     with open(timestamp_file, "w") as f:
         f.write(f"Last update: {datetime.datetime.now().isoformat()}\n")
 
     print((nodes_new_filename, links_new_filename))
 
-    from datetime import datetime
-    now = datetime.now()
-    print("Code run at %s - simulation run at %s" % (now.strftime("%H:%M"), datetime.fromtimestamp(os.path.getmtime(res1d_file)).strftime("%H:%M")))
+    now = datetime.datetime.now()
+    print("Code run at %s - simulation run at %s" % (now.strftime("%H:%M"), datetime.datetime.fromtimestamp(os.path.getmtime(res1d_file)).strftime("%H:%M")))
 
 # import cProfile
 # import pstats
