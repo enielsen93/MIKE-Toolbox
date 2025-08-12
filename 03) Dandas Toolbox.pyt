@@ -337,8 +337,11 @@ class Dandas2MULinks(object):
                 head = f.read(512)
                 match = re.search(br'<\?xml[^>]*encoding=["\']([^"\']+)["\']', head)
                 encoding = match.group(1).decode("ascii") if match else "utf-8"
+            if encoding == "utf-8":
+                encoding = "utf-8-sig"
 
             with open_with_encoding(filepath, encoding) as f:
+                arcpy.AddMessage(encoding)
                 return f.read()
 
         txt = read_xml_with_declared_encoding(dandas_knuder)
@@ -346,7 +349,7 @@ class Dandas2MULinks(object):
         txt = re.sub(r' xmlns="[^"]+"',"",txt)
         
         statusUpdate("Converting %s to XML Tree" % (os.path.basename(dandas_knuder)),tic)
-        tree = ET.fromstring(txt)
+        tree = ET.fromstring(txt.encode("utf-8"))
 
         nodes = tree.findall("Knude")
         
@@ -520,7 +523,7 @@ class Dandas2MULinks(object):
 
             txt = re.sub(r' xmlns="[^"]+"',"",txt)
             
-            tree = ET.fromstring(txt)
+            tree = ET.fromstring(txt.encode("utf-8"))
             
             links = tree.findall("Ledning")
             msm_Link = getAvailableFilename(arcpy.env.scratchGDB + "\msm_Link")
@@ -657,7 +660,7 @@ class Dandas2MULinks(object):
             # Load the .lyr file
             layer_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), r"Data\Dandas Import.lyr")
             addLayer(layer_path, source = None)
-            empty_group_layer = [lyr for lyr in df.listLayers() if lyr.name == "Dandas Import" and lyr.isGroupLayer][0]
+            empty_group_layer = [lyr for lyr in df.listLayers() if getattr(lyr, "name", None) == "Dandas Import" and lyr.isGroupLayer][0]
             empty_group_layer.name = os.path.splitext(os.path.basename(dandas_knuder))[0]
         else:
             empty_group_mapped = arcpy.mapping.Layer(os.path.dirname(os.path.realpath(__file__)) + r"\Data\Dandas Import.lyr")
@@ -1358,78 +1361,77 @@ class CopyMikeUrbanFeatures(object):
                                             'property="msm_CatchCon" value="True"') for line in xml_txt]
                 else:
                     # arcpy.AddMessage(ms_Catchments)
-                    for i, ms_Catchment in enumerate(ms_Catchments):
-                        # arcpy.AddMessage(type(ms_Catchment))
-                        if not ".mdb" in arcpy.Describe(ms_Catchment).catalogPath:
-                            selected = arcpy.Select_analysis(ms_Catchment, "in_memory\ms_Catchment")
+                    # arcpy.AddMessage(type(ms_Catchment))
+                    if not ".mdb" in arcpy.Describe(ms_Catchment).catalogPath:
+                        selected = arcpy.Select_analysis(ms_Catchment, "in_memory\ms_Catchment")
 
-                            ms_CatchmentMUIDs = [row[0] for row in arcpy.da.SearchCursor(selected,"MUID")]
-                            duplicateMUIDs = [row[0] for row in arcpy.da.SearchCursor(os.path.join(MU_database,"msm_Catchment"),"MUID",where_clause = "MUID IN ('%s')" % ("', '".join(ms_CatchmentMUIDs)))]
-                            # duplicateHModA = [row[0] for row in arcpy.da.SearchCursor(os.path.join(MU_database,"msm_HModA"),"CatchID",where_clause = "CatchID IN ('%s')" % ("', '".join(ms_CatchmentMUIDs)))]
-                            duplicateCatchCon = [row[0] for row in arcpy.da.SearchCursor(os.path.join(MU_database,"msm_CatchCon"),"CatchID",where_clause = "CatchID IN ('%s')" % ("', '".join(ms_CatchmentMUIDs)))]
+                        ms_CatchmentMUIDs = [row[0] for row in arcpy.da.SearchCursor(selected,"MUID")]
+                        duplicateMUIDs = [row[0] for row in arcpy.da.SearchCursor(os.path.join(MU_database,"msm_Catchment"),"MUID",where_clause = "MUID IN ('%s')" % ("', '".join(ms_CatchmentMUIDs)))]
+                        # duplicateHModA = [row[0] for row in arcpy.da.SearchCursor(os.path.join(MU_database,"msm_HModA"),"CatchID",where_clause = "CatchID IN ('%s')" % ("', '".join(ms_CatchmentMUIDs)))]
+                        duplicateCatchCon = [row[0] for row in arcpy.da.SearchCursor(os.path.join(MU_database,"msm_CatchCon"),"CatchID",where_clause = "CatchID IN ('%s')" % ("', '".join(ms_CatchmentMUIDs)))]
 
-                            errorMessage = ""
-                            if duplicateMUIDs:
-                                errorMessage += "Catchments with MUID ('%s') already exist in Catchment Layer in Mike Urban Database" % ("(', '".join(duplicateMUIDs))
-                            # if duplicateHModA:
-                            #     errorMessage = errorMessage + "\n" if errorMessage else ""
-                            #     errorMessage += "Catchments with MUID ('%s') already exist in Model Records (msm_HModA) in Mike Urban Database" % ("(', '".join(duplicateHModA))
-                            if duplicateCatchCon:
-                                errorMessage = errorMessage + "\n" if errorMessage else ""
-                                errorMessage += "Catchments with MUID ('%s') already exist in Catchment Connections (msm_CatchCon) in Mike Urban Database" % ("(', '".join(duplicateCatchCon))
-                            if errorMessage:
-                                arcpy.AddWarning(errorMessage)
-                            if not errorMessage:
-                                if arcgis_pro:
-                                    userquery = confirm_assignment("%s\nTransfer catchments anyway?" % (errorMessage), "Confirm Transfer", yes_return = "OK")
-                                else:
-                                    userquery = pythonaddins.MessageBox("%s\nTransfer catchments anyway?" % (errorMessage), "Confirm Transfer", 1)
+                        errorMessage = ""
+                        if duplicateMUIDs:
+                            errorMessage += "Catchments with MUID ('%s') already exist in Catchment Layer in Mike Urban Database" % ("(', '".join(duplicateMUIDs))
+                        # if duplicateHModA:
+                        #     errorMessage = errorMessage + "\n" if errorMessage else ""
+                        #     errorMessage += "Catchments with MUID ('%s') already exist in Model Records (msm_HModA) in Mike Urban Database" % ("(', '".join(duplicateHModA))
+                        if duplicateCatchCon:
+                            errorMessage = errorMessage + "\n" if errorMessage else ""
+                            errorMessage += "Catchments with MUID ('%s') already exist in Catchment Connections (msm_CatchCon) in Mike Urban Database" % ("(', '".join(duplicateCatchCon))
+                        if errorMessage:
+                            arcpy.AddWarning(errorMessage)
+                        if not errorMessage:
+                            if arcgis_pro:
+                                userquery = confirm_assignment("%s\nTransfer catchments anyway?" % (errorMessage), "Confirm Transfer", yes_return = "OK")
+                            else:
+                                userquery = pythonaddins.MessageBox("%s\nTransfer catchments anyway?" % (errorMessage), "Confirm Transfer", 1)
 
-                                if userquery == "OK":
-                                    arcpy.Append_management(selected, os.path.join(MU_database,"ms_Catchment"), schema_type = "NO_TEST")
-                                    fields = [field.name.lower() for field in arcpy.ListFields(selected)]
-                                    def readField(field):
-                                        if field.lower() in fields:
-                                            return field
-                                        else:
-                                            return "SHAPE@XY"
-                                    with arcpy.da.SearchCursor(selected,["MUID","ImpArea","NodeID", readField("ParAID"), readField("RedFactor"), readField("ConcTime"), readField("InitLoss")]) as catchmentCursor:
-                                        with arcpy.da.InsertCursor(os.path.join(MU_database,"msm_CatchCon"),["CatchID","NodeID","TypeNo"]) as cursor:
-                                            for row in catchmentCursor:
-                                                nID = 0 if not row[2] else row[2]
-                                                cursor.insertRow((row[0],nID,1))
-                                        catchmentCursor.reset()
-                                        with arcpy.da.InsertCursor(os.path.join(MU_database,"msm_HModA"),["CatchID","ImpArea","ParAID","LocalNo","ConcTime","RFactor","ILoss","CoeffNo","TACoeff"]) as cursor:
-                                            for row in catchmentCursor:
-                                                iArea = 0 if not row[1] else row[1]
-                                                cursor.insertRow((row[0],iArea,"-DEFAULT-" if not row[3] or type(row[3]) is tuple else row[3],
-                                                                  0,
-                                                                  7 if not row[5] or type(row[5]) is tuple else row[5],
-                                                                  0.9 if not row[4] or type(row[4]) is tuple else row[4],
-                                                                  0.0006 if not row[6] or type(row[6]) is tuple else row[6],
-                                                                  0,0.33))
-                        else:
-                            input_database = arcpy.Describe(ms_Catchment).catalogPath.split(".mdb")[0] + ".mdb"
-                            selected = arcpy.Select_analysis(ms_Catchment, "in_memory\ms_Catchment")
-                            arcpy.Append_management(selected, os.path.join(MU_database,"ms_Catchment"),"NO_TEST")
-                            MUIDs = [row[0] for row in arcpy.da.SearchCursor(selected, ["MUID"])]
-                            # arcpy.management.Append(selected, MU_database + "\ms_Catchment")
-                            arcpy.AddMessage( "MUID IN ('%s')" % "', '".join(MUIDs))
-                            selected_HModA = arcpy.TableSelect_analysis(os.path.join(input_database, "msm_HModA"), "in_memory\msm_HModA", where_clause = "CatchID IN ('%s')" % "', '".join(MUIDs))[0]
-                            # fields = [field.name for field in arcpy.ListFields(MU_database + "\msm_HModA") if not field.name == "OBJECTID"]
-                            # arcpy.AddMessage(fields)
-                            # with arcpy.da.InsertCursor(MU_database + "\msm_HModA", ["CatchID","ImpArea","ParAID","LocalNo","ConcTime","RFactor","ILoss","CoeffNo","TACoeff"]) as target_cursor:
-                            # with arcpy.da.SearchCursor(os.path.join(input_database, "msm_HModA"), fields, where_clause = "CatchID IN ('%s')" % "', '".join(MUIDs)) as reference_cursor:
-                            # for row in reference_cursor:
-                            # arcpy.AddMessage(row)
-                            # target_cursor.insertRow(("gay",0,"-DEFAULT-",0,7,0.9,0.0006,0,0.33))
-                            # # arcpy.AddMessage(selected_HModA)
-                            # arcpy.CopyFeatures_management(selected_HModA, "K:\Hydrauliske modeller\Papirkurv\SonsOfKemet")
-                            arcpy.management.Append(selected_HModA, MU_database + "\msm_HModA")
-                            selected_CatchCon = arcpy.TableSelect_analysis(os.path.join(input_database, "msm_CatchCon"), "in_memory\msm_CatchCon", where_clause = "CatchID IN ('%s')" % "', '".join(MUIDs))[0]
-                            arcpy.AddMessage("CatchID IN ('%s')" % "', '".join(MUIDs))
-                            arcpy.AddMessage([row[0] for row in arcpy.da.SearchCursor(selected_CatchCon, ["CatchID"])])
-                            arcpy.management.Append(selected_CatchCon, MU_database + "\msm_CatchCon")
+                            if userquery == "OK":
+                                arcpy.Append_management(selected, os.path.join(MU_database,"ms_Catchment"), schema_type = "NO_TEST")
+                                fields = [field.name.lower() for field in arcpy.ListFields(selected)]
+                                def readField(field):
+                                    if field.lower() in fields:
+                                        return field
+                                    else:
+                                        return "SHAPE@XY"
+                                with arcpy.da.SearchCursor(selected,["MUID","ImpArea","NodeID", readField("ParAID"), readField("RedFactor"), readField("ConcTime"), readField("InitLoss")]) as catchmentCursor:
+                                    with arcpy.da.InsertCursor(os.path.join(MU_database,"msm_CatchCon"),["CatchID","NodeID","TypeNo"]) as cursor:
+                                        for row in catchmentCursor:
+                                            nID = 0 if not row[2] else row[2]
+                                            cursor.insertRow((row[0],nID,1))
+                                    catchmentCursor.reset()
+                                    with arcpy.da.InsertCursor(os.path.join(MU_database,"msm_HModA"),["CatchID","ImpArea","ParAID","LocalNo","ConcTime","RFactor","ILoss","CoeffNo","TACoeff"]) as cursor:
+                                        for row in catchmentCursor:
+                                            iArea = 0 if not row[1] else row[1]
+                                            cursor.insertRow((row[0],iArea,"-DEFAULT-" if not row[3] or type(row[3]) is tuple else row[3],
+                                                              0,
+                                                              7 if not row[5] or type(row[5]) is tuple else row[5],
+                                                              0.9 if not row[4] or type(row[4]) is tuple else row[4],
+                                                              0.0006 if not row[6] or type(row[6]) is tuple else row[6],
+                                                              0,0.33))
+                    else:
+                        input_database = arcpy.Describe(ms_Catchment).catalogPath.split(".mdb")[0] + ".mdb"
+                        selected = arcpy.Select_analysis(ms_Catchment, "in_memory\ms_Catchment")
+                        arcpy.Append_management(selected, os.path.join(MU_database,"ms_Catchment"),"NO_TEST")
+                        MUIDs = [row[0] for row in arcpy.da.SearchCursor(selected, ["MUID"])]
+                        # arcpy.management.Append(selected, MU_database + "\ms_Catchment")
+                        arcpy.AddMessage( "MUID IN ('%s')" % "', '".join(MUIDs))
+                        selected_HModA = arcpy.TableSelect_analysis(os.path.join(input_database, "msm_HModA"), "in_memory\msm_HModA", where_clause = "CatchID IN ('%s')" % "', '".join(MUIDs))[0]
+                        # fields = [field.name for field in arcpy.ListFields(MU_database + "\msm_HModA") if not field.name == "OBJECTID"]
+                        # arcpy.AddMessage(fields)
+                        # with arcpy.da.InsertCursor(MU_database + "\msm_HModA", ["CatchID","ImpArea","ParAID","LocalNo","ConcTime","RFactor","ILoss","CoeffNo","TACoeff"]) as target_cursor:
+                        # with arcpy.da.SearchCursor(os.path.join(input_database, "msm_HModA"), fields, where_clause = "CatchID IN ('%s')" % "', '".join(MUIDs)) as reference_cursor:
+                        # for row in reference_cursor:
+                        # arcpy.AddMessage(row)
+                        # target_cursor.insertRow(("gay",0,"-DEFAULT-",0,7,0.9,0.0006,0,0.33))
+                        # # arcpy.AddMessage(selected_HModA)
+                        # arcpy.CopyFeatures_management(selected_HModA, "K:\Hydrauliske modeller\Papirkurv\SonsOfKemet")
+                        arcpy.management.Append(selected_HModA, MU_database + "\msm_HModA")
+                        selected_CatchCon = arcpy.TableSelect_analysis(os.path.join(input_database, "msm_CatchCon"), "in_memory\msm_CatchCon", where_clause = "CatchID IN ('%s')" % "', '".join(MUIDs))[0]
+                        arcpy.AddMessage("CatchID IN ('%s')" % "', '".join(MUIDs))
+                        arcpy.AddMessage([row[0] for row in arcpy.da.SearchCursor(selected_CatchCon, ["CatchID"])])
+                        arcpy.management.Append(selected_CatchCon, MU_database + "\msm_CatchCon")
 
             if is_sqlite:
                 import tempfile
