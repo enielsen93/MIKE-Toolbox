@@ -145,7 +145,7 @@ class PipeDimensionToolTAPro(object):
         #Define parameter definitions
 
         pipe_layer = arcpy.Parameter(
-            displayName="Pipe feature layer",
+            displayName="Pipe Layer",
             name="pipe_layer",
             datatype="GPFeatureLayer",
             parameterType="Required",
@@ -153,11 +153,12 @@ class PipeDimensionToolTAPro(object):
         # pipe_layer.filter.list = ["Polyline"]
 
         reaches = arcpy.Parameter(
-            displayName="Trace network through:",
+            displayName="Trace network through",
             name="reaches",
             datatype="GPString",
             parameterType="Optional",
             multiValue=True,
+            category = "Network Settings",
             direction="Input")
         reaches.filter.type = "ValueList"
         reaches.filter.list = ["Orifice","Weir","Pump", "Basin"]
@@ -171,23 +172,23 @@ class PipeDimensionToolTAPro(object):
         # result_field.value = "Diameter"
 
         breakChainOnNodes = arcpy.Parameter(
-            displayName="End each trace at following node MUIDs (each node should by delimited by a comma: node1, node2)",
+            displayName="End each trace at node MUIDs (comma-separated, i.e. node1, node2, ...)",
             name="breakChainOnNodes",
             datatype="GPString",
             parameterType="optional",
             direction="Input")
-        breakChainOnNodes.category = "Additional settings"
+        breakChainOnNodes.category = "Network Settings"
 
-        runoff_file = arcpy.Parameter(
-            displayName="Runoff rain event in ASCII Format",
-            name="runoff",
-            datatype="file",
-            parameterType="Required",
-            direction="Input")
-        runoff_file.filter.list = ["txt","km2","kmd","csv"]
+        # runoff_file = arcpy.Parameter(
+        #     displayName="Runoff Rain Event in ASCII Format",
+        #     name="runoff",
+        #     datatype="file",
+        #     parameterType="Required",
+        #     direction="Input")
+        # runoff_file.filter.list = ["txt","km2","kmd","csv"]
 
         scaling_factor = arcpy.Parameter(
-			displayName= "Scaling Factor for runoff rain event",
+			displayName= "Scaling Factor for Rain Event",
 			name="scaling_factor",
 			datatype="GPString",
 			parameterType="Required",
@@ -200,16 +201,16 @@ class PipeDimensionToolTAPro(object):
             datatype="Boolean",
             parameterType="optional",
             direction="Input")
-        useMaxInflow.category = "Additional settings"
+        useMaxInflow.category = "Network Settings"
         useMaxInflow.value = True
 
         slopeOverwrite = arcpy.Parameter(
-            displayName="Overwrite slope of pipes to:",
+            displayName="Use this slope instead of actual values [m/m]",
             name="slopeOverwrite",
             datatype="double",
             parameterType="optional",
             direction="Input")
-        slopeOverwrite.category = "Additional settings"
+        # slopeOverwrite.category = "Additional settings"
 
         writeDFS0 = arcpy.Parameter(
             displayName="Write csv file of runoff for every selected pipe to txt file:",
@@ -217,10 +218,10 @@ class PipeDimensionToolTAPro(object):
             datatype="file",
             parameterType="optional",
             direction="Output")
-        writeDFS0.category = "Additional settings"
+        writeDFS0.category = "Result Settings"
 
         runoff_file = arcpy.Parameter(
-            displayName="Runoff rain event in ASCII or DFS0" if mikeio1d_installed else "Runoff rain event in ASCII",
+            displayName="Rain Event in ASCII or DFS0" if mikeio1d_installed else "Rain Event in ASCII",
             name="runoff",
             datatype="file",
             parameterType="Required",
@@ -236,32 +237,33 @@ class PipeDimensionToolTAPro(object):
             datatype="Boolean",
             parameterType="optional",
             direction="Input")
-        keep_largest_diameter.category = "Additional settings"
+        keep_largest_diameter.category = "Result Settings"
         keep_largest_diameter.value = False
         
         change_material = arcpy.Parameter(
-            displayName="Change material (Plastic if less than 500 mm, concrete if greater than or equal to 500 mm",
+            displayName="Update Material based on Diameter (Plastic < 500 mm, Concrete ≥ 500 mm)",
             name="change_material",
             datatype="Boolean",
             parameterType="optional",
             direction="Input")
-        change_material.category = "Additional settings"
+        change_material.category = "Result Settings"
         change_material.value = True
 
         debug_output = arcpy.Parameter(
-            displayName="Export Layer with attributes instead",
+            displayName="Export Result Layer with attributes (skip diameter assigment)",
             name="debug_output",
             datatype="Boolean",
             parameterType="optional",
             direction="Input")
+        debug_output.category = "Result Settings"
 
         show_graphs = arcpy.Parameter(
-            displayName="Show Discharge Graphs",
+            displayName="Display Discharge Graphs",
             name="show_graphs",
             datatype="Boolean",
             parameterType="optional",
             direction="Input")
-        show_graphs.category = "Additional settings"
+        show_graphs.category = "Result Settings"
 
         parameters = [pipe_layer, reaches, result_field, runoff_file, scaling_factor, breakChainOnNodes, useMaxInflow, slopeOverwrite, writeDFS0, keep_largest_diameter, change_material, debug_output, show_graphs]
         return parameters
@@ -636,7 +638,8 @@ class PipeDimensionToolTAPro(object):
                                     material_name = ""
                                 return material_name
 
-                            arcpy.AddMessage("Changed link '%s': %d%s → %d%s" % (row[3], row[1] * 1e3, materialName(old_material), D[Di], materialName(material)))
+                            # arcpy.AddMessage(row[1])
+                            arcpy.AddMessage("Changed link '%s': %d%s → %d%s" % (row[3], row[1] * 1e3 if row[1] else 0, materialName(old_material), D[Di], materialName(material)))
                             # arcpy.AddMessage("UPDATE msm_Link SET Diameter = %1.3f, SET MaterialID = %s WHERE MUID = %s" % (diameter, material, row[3]))
                             update_cursor.execute(
                                 "UPDATE msm_Link SET Diameter = %1.3f, MaterialID = '%s' WHERE MUID = '%s'" % (
@@ -712,7 +715,7 @@ class PipeDimensionToolResultFile(object):
         # Define parameter definitions
 
         pipe_layer = arcpy.Parameter(
-            displayName="Pipe feature layer",
+            displayName="Pipe Layer",
             name="pipe_layer",
             datatype="GPFeatureLayer",
             parameterType="Required",
@@ -726,21 +729,21 @@ class PipeDimensionToolResultFile(object):
             direction="Input")
 
         result_layer = arcpy.Parameter(
-            displayName="Result Layer with Max Q",
+            displayName="Layer with Max Discharge [m³/s]",
             name="result_layer",
             datatype="GPFeatureLayer",
             parameterType="Required",
             direction="Input")
 
         result_layer_field = arcpy.Parameter(
-            displayName="Field with Max_Q",
+            displayName="Field with Max Discharge [m³/s]",
             name="result_layer_field",
             datatype="GPString",
             parameterType="Required",
             direction="Input")
 
         slopeOverwrite = arcpy.Parameter(
-            displayName="Overwrite slope of pipes to:",
+            displayName="Use this slope instead of actual values [m/m]:",
             name="slopeOverwrite",
             datatype="double",
             parameterType="optional",
@@ -757,7 +760,7 @@ class PipeDimensionToolResultFile(object):
         keep_largest_diameter.value = False
 
         change_material = arcpy.Parameter(
-            displayName="Change material (Plastic if less than 500 mm, concrete if greater than or equal to 500 mm",
+            displayName="Update Material based on Diameter (Plastic < 500 mm, Concrete ≥ 500 mm)",
             name="change_material",
             datatype="Boolean",
             parameterType="optional",
@@ -986,7 +989,7 @@ class upgradeDimensions(object):
             direction="Input")
             
         change_material = arcpy.Parameter(
-            displayName="Change material (Plastic if less than 500 mm, concrete if greater than or equal to 500 mm",
+            displayName="Update Material based on Diameter (Plastic < 500 mm, Concrete ≥ 500 mm)",
             name="change_material",
             datatype="Boolean",
             parameterType="optional",
@@ -1102,7 +1105,7 @@ class downgradeDimensions(object):
             direction="Input")
             
         change_material = arcpy.Parameter(
-            displayName="Change material (Plastic if less than 500 mm, concrete if greater than or equal to 500 mm",
+            displayName="Update Material based on Diameter (Plastic < 500 mm, Concrete ≥ 500 mm)",
             name="change_material",
             datatype="Boolean",
             parameterType="optional",
@@ -2668,10 +2671,11 @@ class DrawLongitudinalProfiles(object):
         # Define parameter definitions
 
         pipe_layer = arcpy.Parameter(
-            displayName="Pipe feature layer",
+            displayName="Reach feature layer",
             name="pipe_layer",
+            multiValue=True,
             datatype="GPFeatureLayer",
-            parameterType="Required",
+            parameterType="Optional",
             direction="Input")
 
         result_files = arcpy.Parameter(
@@ -2719,8 +2723,34 @@ class DrawLongitudinalProfiles(object):
             parameterType="Derived",  # hidden and not user editable
             direction="Output")
 
+        draw_map = arcpy.Parameter(
+            displayName="Draw Map",
+            name="draw_map",
+            datatype="Boolean",
+            parameterType="optional",
+            direction="Input")
+        draw_map.value = True
 
-        parameters = [pipe_layer, result_files, pdf_output, overwrite_or_append, backup_tempfile]
+        zoom_level = arcpy.Parameter(
+            displayName="Zoom Level",
+            name="zoom_level",
+            datatype="Double",
+            parameterType="Required",
+            direction="Input",
+            category="Additional Settings"
+        )
+        zoom_level.value = 1.5
+
+        draw_critical_level = arcpy.Parameter(
+            displayName="Draw Critical Level",
+            name="draw_critical_level",
+            datatype="Boolean",
+            parameterType="optional",
+            category = "Additional Settings",
+            direction="Input")
+        draw_critical_level.value = True
+
+        parameters = [pipe_layer, result_files, pdf_output, overwrite_or_append, backup_tempfile, draw_map, zoom_level, draw_critical_level]
         return parameters
 
     def isLicensed(self):
@@ -2734,22 +2764,30 @@ class DrawLongitudinalProfiles(object):
             map_view = aprx.activeMap
 
             # List layers with selected features
-            layers = None
+            layers = []
             for layer in map_view.listLayers():
                 try:
                     if layer.getSelectionSet() and arcpy.Describe(layer).shapeType == "Polyline":
-                        layers = layer.longName
-                        break
+                        layers.append(layer.longName)
                 except:
                     pass
         else:
             mxd = arcpy.mapping.MapDocument("CURRENT")
             df = arcpy.mapping.ListDataFrames(mxd)[0]
             layers = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
-                      lyr.getSelectionSet() if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'][0]
+                      lyr.getSelectionSet() if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline']
 
         if layers and not parameters[0].ValueAsText:
-            parameters[0].value = layers
+            parameters[0].value = ";".join(layers)
+
+        if parameters[0].ValueAsText:
+            if not parameters[1].value and ".gdb" in parameters[0].Values[0].dataSource:
+                metadata_filepath = os.path.join(os.path.dirname(parameters[0].Values[0].dataSource), "metadata")
+                # parameters[1].Value = [metadata_filepath]
+                if arcpy.Exists(metadata_filepath):
+                    res1d_filepath = [row[0] for row in arcpy.da.SearchCursor(metadata_filepath, ["res1d_path"])][0]
+                    if arcpy.Exists(res1d_filepath):
+                        parameters[1].Value = [res1d_filepath]
 
         pdf_output = parameters[2]
         overwrite_or_append = parameters[3]
@@ -2792,7 +2830,10 @@ class DrawLongitudinalProfiles(object):
         return
 
     def execute(self, parameters, messages):
-        pipe_layer = parameters[0].Value
+        pipe_layers = parameters[0].Values
+        draw_map = parameters[5].Value
+        zoom_level = parameters[6].Value
+        draw_critical_level = parameters[7].Value
 
         if arcgis_pro:
             from mikeio1d import open as open_res1d
@@ -2802,7 +2843,6 @@ class DrawLongitudinalProfiles(object):
             map_obj = aprx.activeMap
             view = aprx.activeView
             old_scale = map_obj.referenceScale
-            arcpy.AddMessage(old_scale)
         else:
             mxd = arcpy.mapping.MapDocument("CURRENT")
             df = arcpy.mapping.ListDataFrames(mxd)[0]
@@ -2812,13 +2852,17 @@ class DrawLongitudinalProfiles(object):
         overwrite_or_append = parameters[3].Value
         backup_tempfile = parameters[4].Value
 
-        pipe_layer_reference = pipe_layer
-        for lyr in (map_obj.listLayers() if arcgis_pro else arcpy.mapping.ListLayers(mxd)):
-            if lyr.name == pipe_layer.name and lyr.getSelectionSet():
-                pipe_layer_reference = lyr
-                break
+        selection_sets = {}
+        pipe_layer_references = {}
+        for pipe_layer in pipe_layers:
+            # pipe_layer_references[pipe_layer] = pipe_layer
+            for lyr in (map_obj.listLayers() if arcgis_pro else arcpy.mapping.ListLayers(mxd)):
+                if lyr.name == pipe_layer.name and lyr.getSelectionSet():
+                    pipe_layer_references[pipe_layer] = lyr
+                    break
 
-        selection_set = pipe_layer_reference.getSelectionSet()
+            selection_sets[pipe_layer] = pipe_layer_references[pipe_layer].getSelectionSet()
+            arcpy.AddMessage(selection_sets[pipe_layer])
 
 
         import os
@@ -2833,13 +2877,15 @@ class DrawLongitudinalProfiles(object):
         import matplotlib.image as mpimg
         import tempfile
 
-        links_selected = [row[0] for row in arcpy.da.SearchCursor(pipe_layer, ["MUID"])]
+        links_selected = []
+        for pipe_layer in pipe_layers:
+            links_selected.extend([row[0] for row in arcpy.da.SearchCursor(pipe_layer, ["MUID"])])
 
         # -----------------------
         # User Inputs
         # -----------------------
         # RES1D_FOLDER = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Jens Juuls Vej\MIKE_URBAN\JJV_032\JJV_032_m1d - Result Files\JJV_032_CDS_5_133_240BaseDefault_Network_HD.res1d"
-        SQLITE_FILE = os.path.dirname(arcpy.Describe(pipe_layer).catalogPath)
+        SQLITE_FILE = os.path.dirname(arcpy.Describe(pipe_layers[0]).catalogPath)
         # SQLITE_FILE = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Hasle Torv\MIKE_URBAN\HAT_063\HAT_063.sqlite"
         OUTPUT_PDF = output_pdf
         # output_pdf_temporary = OUTPUT_PDF
@@ -2872,11 +2918,10 @@ class DrawLongitudinalProfiles(object):
         # -----------------------
         arcpy.AddMessage(tlog.log("Loading Nodes & Links"))
         node_table = os.path.join(SQLITE_FILE, "msm_Node")
-        link_table = os.path.join(SQLITE_FILE, "msm_Link")
+
         # --- Data container classes ---
         class Link:
             """Holds Link attributes and native geometry"""
-
             def __init__(self, muid, fromnodeid, tonodeid,
                          length, diameter, uplevel, dwlevel, geometry):
                 self.muid = muid
@@ -2892,12 +2937,13 @@ class DrawLongitudinalProfiles(object):
 
         class Node:
             """Holds Node attributes and native geometry"""
-
             def __init__(self, muid, invertlevel, groundlevel, geometry):
                 self.muid = muid
                 self.invertlevel = invertlevel if invertlevel != -99 else None
                 self.groundlevel = groundlevel if groundlevel and groundlevel != -99 else self.invertlevel
                 self.geometry = geometry
+
+                self.critical_level = None
                 if arcgis_pro:
                     self.shapely_geom = wkb.loads(bytes(geometry.WKB))
 
@@ -2909,7 +2955,7 @@ class DrawLongitudinalProfiles(object):
         link_where = "muid IN ({})".format(link_placeholders)
 
         # Determine actual field names for 'from' and 'to' nodes (handles naming variations)
-        all_link_fields = [f.name for f in arcpy.ListFields(link_table)]
+        all_link_fields = [f.name.lower() for f in arcpy.ListFields(pipe_layers[0])]
         fromnode_field = "fromnodeid" if "fromnodeid" in all_link_fields else "fromnode"
         tonode_field = "tonodeid" if "tonodeid" in all_link_fields else "tonode"
 
@@ -2918,7 +2964,7 @@ class DrawLongitudinalProfiles(object):
             "muid",
             fromnode_field,
             tonode_field,
-            "length",
+            "length" if "length" in all_link_fields else "SHAPE@LENGTH",
             "diameter",
             "UpLevel",
             "DwLevel",
@@ -2926,27 +2972,71 @@ class DrawLongitudinalProfiles(object):
         ]
 
         links = {}
+
+        has_database = True if "MaxQ".lower() not in all_link_fields else False #True if ".sqlite" in arcpy.Describe(pipe_layers[0]).catalogPath or ".mdb" in arcpy.Describe(pipe_layers[0]).catalogPath else False
         # Use arcpy.da.SearchCursor to fetch rows and attach geometries
-        with arcpy.da.SearchCursor(link_table, link_fields, link_where) as cursor:
-            for muid, frm, to, length, diam, up, dw, shape in cursor:
-                link = Link(
-                    muid=muid,
-                    fromnodeid=frm,
-                    tonodeid=to,
-                    length=length,
-                    diameter=diam,
-                    uplevel=up,
-                    dwlevel=dw,
-                    geometry=shape
-                )
-                link.length = link.length if link.length else shape.length
-                links[muid] = link
+
+        # If link_table is a database
+        if has_database:
+            for pipe_layer in pipe_layers:
+                if "msm_Weir".lower() in pipe_layer.dataSource.lower():
+                    with arcpy.da.SearchCursor(pipe_layer, ["muid", "fromnodeid", "tonodeid", "SHAPE@LENGTH", "crestlevel", "SHAPE@"], link_where) as cursor:
+                        for muid, frm, to, length, up, shape in cursor:
+                            link = Link(
+                                muid=muid,
+                                fromnodeid=frm,
+                                tonodeid=to,
+                                diameter = None,
+                                length=length,
+                                uplevel=up,
+                                dwlevel=up,
+                                geometry=shape
+                            )
+                            links[muid] = link
+                else:
+                    with arcpy.da.SearchCursor(pipe_layer, link_fields, link_where) as cursor:
+                        for muid, frm, to, length, diam, up, dw, shape in cursor:
+                            link = Link(
+                                muid=muid,
+                                fromnodeid=frm,
+                                tonodeid=to,
+                                length=length,
+                                diameter=diam,
+                                uplevel=up,
+                                dwlevel=dw,
+                                geometry=shape
+                            )
+                            link.length = link.length if link.length else shape.length
+                            links[muid] = link
+        else: # Read link data from res1d file
+            result_file = result_files[0]
+            res1d = Res1D(result_file)
+            for reach in res1d.reaches.values():
+                arcpy.AddMessage(reach)
+                name = reach.name.replace("Weir:","").replace("Orifice:","")
+                if name in links_selected:
+                    link = Link(
+                        muid = name,
+                        fromnodeid = reach.start_node,
+                        tonodeid = reach.end_node,
+                        length = reach.length,
+                        diameter = reach.height,
+                        uplevel = reach.gridpoints[0].bottom_level,
+                        dwlevel = reach.gridpoints[-1].bottom_level,
+                        geometry = arcpy.Polyline(arcpy.Array([arcpy.Point(gridpoint.xcoord, gridpoint.ycoord) for gridpoint in reach.gridpoints]))
+                    )
+                    if "Weir" in reach.name:
+                        arcpy.AddMessage(dir(reach))
+                    links[reach.name] = link
+                    arcpy.AddMessage(link)
+
 
         # -----------------------
         # 2) Read Nodes
         # -----------------------
         # Extract unique node IDs from loaded links
         node_ids = {link.fromnodeid for link in links.values()} | {link.tonodeid for link in links.values()}
+        arcpy.AddMessage(node_ids)
 
         # Build WHERE clause for selected nodes
         node_placeholders = ",".join("'{}'".format(nid) for nid in node_ids)
@@ -2957,20 +3047,44 @@ class DrawLongitudinalProfiles(object):
             "muid",
             "invertlevel",
             "groundlevel",
-            "SHAPE@"
+            "SHAPE@",
+            "CriticalLevel"
         ]
 
         nodes = {}
         # Use arcpy.da.SearchCursor to fetch node rows and attach geometries
-        with arcpy.da.SearchCursor(node_table, node_fields, node_where) as cursor:
-            for muid, invertlevel, groundlevel, shape in cursor:
-                node = Node(
-                    muid=muid,
-                    invertlevel=invertlevel,
-                    groundlevel=groundlevel if groundlevel else invertlevel,
-                    geometry=shape
-                )
-                nodes[muid] = node
+        if has_database:
+            with arcpy.da.SearchCursor(node_table, node_fields, node_where) as cursor:
+                for muid, invertlevel, groundlevel, shape, criticallevel in cursor:
+                    node = Node(
+                        muid=muid,
+                        invertlevel=invertlevel,
+                        groundlevel=groundlevel if groundlevel else invertlevel,
+                        geometry=shape
+                    )
+                    if criticallevel:
+                        node.critical_level = criticallevel
+                    nodes[muid] = node
+        else:  # Read link data from res1d file
+            result_file = result_files[0]
+            res1d = Res1D(result_file)
+            for node in res1d.nodes.values():
+                if node.id in node_ids:
+                    manhole = Node(
+                        muid=node.id,
+                        invertlevel = node.bottom_level,
+                        groundlevel = node.ground_level,
+                        geometry = arcpy.PointGeometry(arcpy.Point(node.geometry.x, node.geometry.y))
+                    )
+                    nodes[node.id] = manhole
+
+        # set uplevel and dwlevle to invert level of manhole is isinf (res1d)
+        for link in links.values():
+            arcpy.AddMessage((link, link.uplevel, link.dwlevel, link.muid))
+            if link.uplevel and math.isinf(link.uplevel):
+                link.uplevel = nodes[link.fromnodeid].invertlevel
+            if link.dwlevel and math.isinf(link.dwlevel):
+                link.dwlevel = nodes[link.tonodeid].invertlevel
 
         # Log results
         arcpy.AddMessage("Loaded {} links and {} nodes".format(len(links), len(nodes)))
@@ -2997,19 +3111,39 @@ class DrawLongitudinalProfiles(object):
                     self.water_level_end = None
 
             for f in result_files:
-                name = os.path.basename(os.path.splitext(f)[0])
+                name = os.path.basename(os.path.splitext(f)[0]).replace("Base","").replace("Result_file","")
                 scenario_data[name] = []
-                res1d = open_res1d(f, reaches = links_selected)
-                for pipe in links_selected:
-                    if pipe in res1d.reaches:
-                        queries = [QueryDataReach("WaterLevel", pipe, 0),
-                                   QueryDataReach("WaterLevel", pipe, res1d.reaches[pipe].length)]
-                        query_result = res1d.read(queries).max()
-                        pipe_result = Pipe(pipe, res1d.reaches[pipe].start_node, res1d.reaches[pipe].end_node)
+                res1d_reaches = Res1D(f).network.reaches
 
-                        pipe_result.water_level_start = query_result.iloc[0]
-                        pipe_result.water_level_end = query_result.iloc[1]
-                        scenario_data[name].append(pipe_result)
+                links_fixed = links_selected.copy()
+                fix_links = True # Fix Links if muid is missing from Result File
+                if fix_links:
+                    for link_i, muid in enumerate(links_selected):
+                        if muid not in res1d_reaches:
+                            try:
+                                new_link = [reach for reach in res1d_reaches.values() if links[muid].fromnodeid == reach.start_node and links[muid] .tonodeid == reach.end_node]
+                                arcpy.AddMessage(new_link)
+                                if new_link:
+                                    arcpy.AddMessage((links_fixed[link_i], new_link[0].name))
+                                    links_fixed[link_i] = new_link[0].name
+                            except Exception as e:
+                                pass
+
+                res1d = open_res1d(f, reaches = links_fixed)
+                for pipe_i, pipe in enumerate(links_fixed):
+                    if pipe in res1d.reaches:
+                        try:
+                            queries = [QueryDataReach("WaterLevel", pipe, 0),
+                                       QueryDataReach("WaterLevel", pipe, res1d.reaches[pipe].length)]
+
+                            query_result = res1d.read(queries).max()
+                            pipe_result = Pipe(links_selected[pipe_i], res1d.reaches[pipe].start_node, res1d.reaches[pipe].end_node)
+
+                            pipe_result.water_level_start = query_result.iloc[0]
+                            pipe_result.water_level_end = query_result.iloc[1]
+                            scenario_data[name].append(pipe_result)
+                        except Exception as e:
+                            pass
 
                 # res = open_res1d(f, nodes = (list(de_nodes.index)))
                 # gdf = res.network.nodes.to_geopandas(agg='max', include_derived=False)
@@ -3067,6 +3201,7 @@ class DrawLongitudinalProfiles(object):
 
                     groundlevels = [nodes[muid].groundlevel for muid in path]
                     invertlevels = [nodes[muid].invertlevel for muid in path]
+                    criticallevels = [nodes[muid].critical_level for muid in path]
 
                     # Set up Figures
                     fw = max(8, 8 + 0.5 * (len(path) - 2))
@@ -3075,7 +3210,7 @@ class DrawLongitudinalProfiles(object):
 
                     # bar width
                     diffs = np.diff(chain) if len(chain) > 1 else [1]
-                    w = min(diffs) * 0.2;
+                    w = min(diffs) * 0.4;
                     half = w / 2
 
                     # Draw pipes
@@ -3091,7 +3226,7 @@ class DrawLongitudinalProfiles(object):
                         # get dwlevel, fallback to downstream node invert
                         bd = link.dwlevel if link.dwlevel else nodes[tonodeid].invertlevel
 
-                        d = link.diameter*1e3 # mm
+                        d = link.diameter*1000 if link.diameter else 0 # mm
 
                         if sx and ex and bu and bd:
                             ax.plot([sx, ex], [bu, bd], 'k-', lw=1)
@@ -3105,11 +3240,17 @@ class DrawLongitudinalProfiles(object):
                                 ha='center', va='bottom', fontsize=8)
 
                     # Draw Manholes
-                    ax.plot(chain, groundlevels, 'g-', lw=0.8, label='Ground Level')
-                    for x, g, inv in zip(chain, groundlevels, invertlevels):
+                    ax.plot(chain, groundlevels, 'g-', lw=0.8, label=u'Terrænkote')
+                    # if draw_critical_level:
+                    #     ax.plot(chain, criticallevels, 'r-', lw=0.8, label=u'Kritisk Kote')
+                    skip_critical_level_label = False
+                    for x, g, inv, criticallevel in zip(chain, groundlevels, invertlevels, criticallevels):
                         if g and inv:
                             rect = Rectangle((x - half, inv), w, g - inv, fill=False, edgecolor='black', lw=1.0)
                             ax.add_patch(rect)
+                            if draw_critical_level and criticallevel:
+                                ax.plot([x - half, x + half], [criticallevel, criticallevel], 'r-', lw=1.0, label = "Kritisk Kote" if not skip_critical_level_label else None)
+                                skip_critical_level_label = True
 
                     cmap = plt.cm.get_cmap('tab10' if arcgis_pro else "Set1")
 
@@ -3119,7 +3260,12 @@ class DrawLongitudinalProfiles(object):
 
                     # Draw results
                     for idx, (nm, pipe_result) in enumerate(scenario_data.items()):
-                        modified_chainage = [chain[0]] + [c for c in chain[1:-1] for _ in (0, 1)] + [chain[-1]]
+                        # Create a new list where the first and last elements of `chain` remain unchanged,
+                        # but each middle element is replaced by two elements adjusted by ±half on their value.
+                        # For example, if chain elements are numbers, each middle element c is replaced by (c - half) and (c + half).
+                        # If elements are tuples, only the second value (c[1]) is adjusted, first value (c[0]) stays the same.
+                        modified_chainage = [chain[0]] + [val for c in chain[1:-1] for val in (c - half, c + half)] + [chain[-1]]
+
                         link_water_level = []
                         for fromnodeid, tonodeid in zip(path, path[1:]):
                             water_level = next(
@@ -3143,17 +3289,16 @@ class DrawLongitudinalProfiles(object):
                     ticks = np.arange(0, np.ceil(chain[-1] / 50) * 50 + 1, 50)
                     ax.set_xticks(ticks)
                     ax.set_xticklabels([str(int(t)) for t in ticks], fontsize=8)
-                    ax.set_xlabel('Chainage (m)')
-                    ax.set_ylabel('Elevation (m)')
-                    ax.set_title(u"Profile: {} → {}".format(path[0], path[-1]))
+                    ax.set_xlabel('Stationering (m)')
+                    ax.set_ylabel('Kote (m)')
+                    ax.set_title(u"Profil: {} → {}".format(path[0], path[-1]))
                     ax.grid(True, linestyle='--', lw=0.5)
                     legend = ax.legend(fontsize='small', loc='upper left', bbox_to_anchor=(1.02, 1.0))
 
-                    # Create square inset map: e.g., 0.22 x 0.22 in figure coords
-                    inset_size = 0.55
-                    map_ax = fig.add_axes([0.6, 0.15, inset_size, inset_size])  # x0, y0, width, height
-
                     if False:
+                        # Create square inset map: e.g., 0.22 x 0.22 in figure coords
+                        inset_size = 0.55
+                        map_ax = fig.add_axes([0.6, 0.15, inset_size, inset_size])  # x0, y0, width, height
                         # Plot full network in light grey
                         links_geoseries.plot(ax=map_ax, color='black', linewidth=0.5)
                         # Highlight selected path
@@ -3182,7 +3327,10 @@ class DrawLongitudinalProfiles(object):
 
                         map_ax.set_axis_off()
                         map_ax.set_axis_off()
-                    elif arcgis_pro:
+                    elif arcgis_pro and draw_map:
+                        # Create square inset map: e.g., 0.22 x 0.22 in figure coords
+                        inset_size = 0.55
+                        map_ax = fig.add_axes([0.6, 0.15, inset_size, inset_size])  # x0, y0, width, height
                         muids = []
                         for fromnodeid, tonodeid in zip(path, path[1:]):
                             muids.append([link.muid for link in links.values() if
@@ -3204,13 +3352,14 @@ class DrawLongitudinalProfiles(object):
                                 layer.setSelectionSet()
                             except:
                                 pass
-                        arcpy.management.SelectLayerByAttribute(pipe_layer_reference, "NEW_SELECTION", where_clause)
+
+                        for pipe_layer in pipe_layers:
+                            arcpy.management.SelectLayerByAttribute(pipe_layer_references[pipe_layer], "NEW_SELECTION", where_clause)
 
                         view.zoomToAllLayers(True)
 
                         current_scale = view.camera.scale
-                        arcpy.AddMessage(current_scale)
-                        view.camera.scale = current_scale * 1.5
+                        view.camera.scale = current_scale * zoom_level
                         map_obj.referenceScale = 2000
 
                         temp_dir = tempfile.gettempdir()
@@ -3253,10 +3402,15 @@ class DrawLongitudinalProfiles(object):
         print("Saved profiles to: {}".format(OUTPUT_PDF))
 
         os.startfile(os.path.dirname(OUTPUT_PDF))  # Opens folder in Explorer
-        arcpy.AddMessage(selection_set)
-        pipe_layer_reference.setSelectionSet(list(selection_set))
+
+        for pipe_layer in pipe_layers:
+            arcpy.AddMessage(pipe_layer)
+            arcpy.AddMessage(pipe_layer_references)
+            arcpy.AddMessage(selection_sets)
+            arcpy.AddMessage(list(selection_sets[pipe_layer]))
+            pipe_layer_references[pipe_layer].setSelectionSet(list(selection_sets[pipe_layer]))
         map_obj.referenceScale = old_scale
-        arcpy.AddMessage(old_scale)
+
 
         return
 
