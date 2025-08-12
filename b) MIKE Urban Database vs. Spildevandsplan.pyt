@@ -428,7 +428,7 @@ class AnalyzeSPV(object):
         return
 
     def execute(self, parameters, messages):
-        catchments = parameters[0].ValueAsText
+        catchments = parameters[0].Value
         SPV_feature = parameters[1].ValueAsText
         OPL_name = parameters[2].ValueAsText
         imp_field = parameters[3].ValueAsText
@@ -440,39 +440,56 @@ class AnalyzeSPV(object):
             def __init__(self, area, imp_area, pe_total):
                 self.area = area
                 self.imp_area = imp_area
-                self.pe_total = pe_total        
-                
+                self.pe_total = pe_total
+
+        fields = [f.name.lower() for f in arcpy.ListFields(catchments)]
+        arcpy.AddMessage(catchments.getSelectionSet())
+
         oplande_model = {}
-        with arcpy.da.SearchCursor(catchments, ['SPVOpl','SHAPE@AREA','ImpArea','Area','Persons']) as cursor:
+        with arcpy.da.SearchCursor(arcpy.Describe(catchments).catalogPath, ['SPVOpl' if "spvopl" in fields else "Description", 'SHAPE@AREA', 'ImpArea' if "imparea" in fields else "modelaimparea", 'Area', 'Persons']) as cursor:
             for row in cursor:
                 SPVOpl = "None" if row[0] is None else row[0]
                 PE = 0 if row[4] is None else row[4]
                 area = row[3]*1e4 if row[3] else row[1]
                 if SPVOpl == "None":
-                    arcpy.AddMessage(area)
-                    
-                
+                    pass
+                    # arcpy.AddMessage(area)
+
+
                 if SPVOpl not in oplande_model:
                     oplande_model[SPVOpl] = Opland(area, area*row[2]/1e2, PE)
                 else:
                     oplande_model[SPVOpl].area += area
                     oplande_model[SPVOpl].imp_area += area*row[2]/1e2
                     oplande_model[SPVOpl].pe_total += PE
-        
+
         oplande_SPV = {}
+
+        def to_float(val):
+            try:
+                # Handle strings with comma or period as decimal separator
+                if isinstance(val, basestring if 'basestring' in globals() else str):
+                    val = val.replace(",", ".")
+                return float(val)
+            except (ValueError, TypeError):
+                return None  # or raise, or return float('nan') depending on your use case
+
         with arcpy.da.SearchCursor(SPV_feature, [OPL_name, "SHAPE@AREA", imp_field]) as cursor:
             for row in cursor:
+                arcpy.AddMessage(row)
                 try:
-                    oplande_SPV[row[0]] = Opland(row[1]/1e4, (float(row[2].replace(",",".")) if isinstance(row[2], (str,unicode)) else row[2])*row[1]/1e4, 0)
+                    oplande_SPV[row[0]] = Opland(row[1]/1e4, (to_float(row[2]) if to_float(row[2]) else 0)*row[1]/1e4, 0)
                 except Exception as e:
                     arcpy.AddError(row)
                     raise(e)
 
         oplande_SPV["None"] = Opland(0,0,0)
-        
+
         if getBookmarkConnections:
             spvBookmarkIntersect = arcpy.Intersect_analysis(in_features=[[getBookmarkConnections, 1],[SPV_feature, 2]], out_feature_class="spvBookmarkIntersect", join_attributes="ALL", cluster_tolerance="-1 Unknown", output_type="INPUT")
-        
+
+        arcpy.AddMessage(oplande_model)
+
         if not sheet==None:
             wb = xlwt.Workbook()
             ws = wb.add_sheet('Oplandssammenligning')
@@ -533,10 +550,10 @@ class AnalyzeSPV(object):
                                 else:
                                     areas[row[0]] = row[2]
                         areaSum = sum(areas.values())
-                        
+
                         for pagei,pageName in enumerate(sorted(areas, key=areas.get, reverse=True)):
                             hyperlink = 'HYPERLINK("Kort\%s.pdf";"%s")' % (pageName,pageName)
-                            ws.write(i,10+pagei,xlwt.Formula(hyperlink),xlwt.easyxf('font: underline on'))               
+                            ws.write(i,10+pagei,xlwt.Formula(hyperlink),xlwt.easyxf('font: underline on'))
                         try:
                             maxPage = max(areas,key=areas.get)
                             if len(arcpy.ListFields(spvBookmarkIntersect,"Bynavn"))>0:
@@ -545,7 +562,7 @@ class AnalyzeSPV(object):
                                         ws.write(i,9,row[1])
                                         break
                         except ValueError:
-                            arcpy.AddWarning("Warning: Catchment %s is not found in any of the data driven pages" % key) 
+                            arcpy.AddWarning("Warning: Catchment %s is not found in any of the data driven pages" % key)
                     else:
                         hyperlink = 'HYPERLINK("Kort\%s.pdf";"%s")' % (key,key)
                         ws.write(i,10,xlwt.Formula(hyperlink),xlwt.easyxf('font: underline on'))
