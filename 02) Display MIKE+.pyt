@@ -1782,9 +1782,9 @@ class DisplaySqlitePro(object):
                                             tonodes[row[0]].append(row[4])
                                         else:
                                             tonodes[row[0]] = [row[4]]
-                                    if row[1]:
-                                        basins[row[0]].edges.append(
-                                            basins[row[0]].Edge(row[3], max(row[1], row[2])))
+                                    # if row[1]:
+                                        # basins[row[0]].edges.append(
+                                        #     basins[row[0]].Edge(row[3], max(row[1], row[2])))
                     if False: #Deprecated
                         for feature_class, edgelevel_fieldname in zip(outlet_feature_classes.keys(),
                                                                       outlet_feature_classes.values()):
@@ -1826,8 +1826,8 @@ class DisplaySqlitePro(object):
                             if row[0] in basins:
                                 basin = basins[row[0]]
                                 basin.invert_level = row[6]
-                                if row[2]:
-                                    basin.critical_level = row[2]
+                                # if row[2]:
+                                    # basin.critical_level = row[2]
                                 try:
                                     row[1] = basin.max_volume
                                     row[7] = basin.max_area
