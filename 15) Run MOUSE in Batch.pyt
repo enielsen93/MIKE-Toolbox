@@ -64,6 +64,7 @@ class BatchSimulations(object):
             name="mex_file",
             datatype="File",
             parameterType="Required",
+            multiValue="True",
             direction="Input")
         mex_file.filter.list=["mex", "m1dx"]
         
@@ -116,78 +117,122 @@ class BatchSimulations(object):
         return
 
     def updateMessages(self, parameters):
-        if parameters[2].Value and ".mex" in parameters[2].ValueAsText:
-            with open(parameters[2].ValueAsText,"r") as f:
-                mex_file_text = f.read()
-            if "par1" not in mex_file_text:
-                parameters[2].setErrorMessage("No paramater 'par1' in mex-file")
+        if parameters[2].Values:
+            for mex_file in parameters[2].ValueAsText.split(";"):
+                if ".mex" in mex_file:
+                    with open(mex_file,"r") as f:
+                        mex_file_text = f.read()
+                    if "-9999" not in mex_file_text:
+                        parameters[2].setErrorMessage("No paramater '-9999' in mex-file")
         return
 
     def execute(self, parameters, messages):
-        LTSCount = int(parameters[0].ValueAsText)
-        RunoffFile = parameters[1].ValueAsText
-        mex_file = parameters[2].ValueAsText
-        parameter = parameters[3].ValueAsText
-        mouse_sim_launch = parameters[4].ValueAsText
-        mike1d_launch = parameters[5].ValueAsText
-        
-        parameters = re.findall("[\d\.]+", parameter)
-        
-        
-        with open(mex_file,"r") as f:
-            mex_file_text = f.readlines()
-        mex_file_parameter_lineno = [lineno for lineno,line in enumerate(mex_file_text) if "par1" in line]
-        if RunoffFile and "mex" in mex_file:
-            mex_file_text_CRF_lineno = [lineno for lineno,line in enumerate(mex_file_text) if "CRF_file" in line][0]
-        elif RunoffFile:
-            mex_file_text_CRF_lineno = [lineno for lineno, line in enumerate(mex_file_text) if "RR.res1d" in line][0]
-        
-        mex_files = []
+        # Extract parameters from input list with clear variable names
+        LTSCount = int(parameters[0].ValueAsText)                    # Max concurrent processes allowed
+        RunoffFile = parameters[1].ValueAsText                       # Path to runoff file
+        mex_files_original = [mex_file.replace("'", "") for mex_file in parameters[2].ValueAsText.split(";")]  # List of mex files, cleaned from quotes
+        parameter_str = parameters[3].ValueAsText                     # Parameter string containing numeric values
+        mouse_sim_launch = parameters[4].ValueAsText                  # Path to Mouse simulation executable
+        mike1d_launch = parameters[5].ValueAsText                     # Path to Mike1D executable
+
+        # Extract numeric parameters from the parameter string (e.g., ["10", "30", "50"])
+        parameter_values = re.findall(r"[\d\.]+", parameter_str)
+
+        # Prepare a list to store new mex file names created during the loop
+        all_new_mex_files = []
         processes = []
-        for job in range(len(parameters)):
-            if RunoffFile:
-                arcpy.AddMessage("Copying %s" % RunoffFile)
+
+        # Loop over each original mex file
+        for mex_file in mex_files_original:
+            # Read the mex file content into a list of lines
+            with open(mex_file, "r") as f:
+                mex_file_text = f.readlines()
+
+            # Find line numbers containing the placeholder parameter "par1"
+            par1_line_numbers = [lineno for lineno, line in enumerate(mex_file_text) if "-9999" in line]
+
+            # Determine the line number to update the runoff or CRF file reference based on file content and RunoffFile presence
+            if RunoffFile and "mex" in mex_file:
+                # Use the line with CRF_file keyword if runoff file exists and mex file extension present
+                crf_line_number = next(lineno for lineno, line in enumerate(mex_file_text) if "CRF_file" in line)
+            else:
+                # Otherwise, look for line containing "RR.res1d" as fallback
+                crf_line_number = next(lineno for lineno, line in enumerate(mex_file_text) if "RR.res1d" in line)
+
+            # Process each parameter value separately, creating new mex files customized for each parameter
+            for idx, param_value in enumerate(parameter_values):
+                if RunoffFile:
+                    print("Copying %s" % RunoffFile)
+                    if ".mex" in mex_file:
+                        RunoffFileNew = "%s_Split%d.CRF" % (RunoffFile[:-4], idx + 1)
+                    else:
+                        RunoffFileNew = "%s_Split%d.res1d" % (RunoffFile[:-4], idx + 1)
+                    copyfile(RunoffFile, RunoffFileNew)
+
                 if ".mex" in mex_file:
-                    RunoffFileNew = RunoffFile[0:-4] + "_Split%d.CRF" % (job+1)
+                    mex_file_new = mex_file.replace(".mex", "_par1-%s.mex" % param_value)
                 else:
-                    RunoffFileNew = RunoffFile[0:-4] + "_Split%d.res1d" % (job + 1)
-                copyfile(RunoffFile, RunoffFileNew)
+                    mex_file_new = mex_file.replace(".m1dx", "_par1-%s.m1dx" % param_value)
 
-            if ".mex" in mex_file:
-                mex_file_new = copy.deepcopy(mex_file.replace(".mex","_par1-%s.mex" % (parameters[job])))
-            else:
-                mex_file_new = copy.deepcopy(mex_file.replace(".m1dx", "_par1-%s.m1dx" % (parameters[job])))
-            mex_files.append(mex_file_new)
-            
-            mex_file_new_text = copy.deepcopy(mex_file_text)
-            for lineno in mex_file_parameter_lineno:
-                mex_file_new_text[lineno] = re.sub("par1", parameters[job], mex_file_new_text[lineno])
-            
-            if RunoffFile:
-                mex_file_new_text[mex_file_text_CRF_lineno] = re.sub("'[^']*'", "'%s'" % RunoffFileNew, mex_file_new_text[mex_file_text_CRF_lineno])
-            else:
-                mex_file_new_text[mex_file_text_CRF_lineno] = re.sub("'[^']*'", "'%s'" % mex_file_new.replace(".mex",".CRF"), mex_file_new_text[mex_file_text_CRF_lineno])
-            
-            with open(mex_file_new,'w+') as f:
-                f.writelines(mex_file_new_text)
-            
-            if mouse_sim_launch and ".mex" in mex_file:
-               
-                while len(processes)>0 and not np.sum([1 for process in processes if process.poll() is None]) < LTSCount:
-                    time.sleep(5)
-                if not RunoffFile:
-                    run_cmd = r'"%s" "%s" "RO" "Run" "Close" "NoPrompt" "-wait"' % (mouse_sim_launch, mex_file_new)
-                    subprocess.check_output(run_cmd)
-                run_cmd = r'"%s" "%s" "HD" "Run" "Close" "NoPrompt" "-wait"' % (mouse_sim_launch, mex_file_new)
-                processes.append(subprocess.Popen(run_cmd))
-                time.sleep(1)
-            elif mike1d_launch and "m1dx" in mex_file:
-                while len(processes)>0 and not np.sum([1 for process in processes if process.poll() is None]) < LTSCount:
-                    time.sleep(5)
+                all_new_mex_files.append(mex_file_new)
 
-                run_cmd = '"%s" "%s"' % (mike1d_launch, mex_file_new)
-                processes.append(subprocess.Popen(run_cmd))
-                time.sleep(1)
+                mex_file_new_text = copy.deepcopy(mex_file_text) # make a copy
 
-        return
-        
+                for lineno in par1_line_numbers:
+                    mex_file_new_text[lineno] = re.sub("-9999", param_value, mex_file_new_text[lineno])
+
+                if ".m1dx" in mex_file:
+                    inside_rs = False
+                    for i, line in enumerate(mex_file_new_text):
+                        if "<ResultSpecification>" in line:
+                            inside_rs = True
+                        elif "</ResultSpecification>" in line:
+                            inside_rs = False
+
+                        if inside_rs and "<Path>" in line:
+                            arcpy.AddMessage(line)
+                            def repl(match):
+                                content = match.group(1)
+                                new_content = content.replace("Base.res1d", "_%sBase.res1d" % str(param_value).replace(".","_"))
+                                return "<Path>%s</Path>" % new_content
+
+                            mex_file_new_text[i] = re.sub(r"<Path>(.*?)</Path>", repl, line)
+                            arcpy.AddMessage(line)
+                            arcpy.AddMessage((r"<Path>(.*?)</Path>", repl, line))
+
+                if RunoffFile:
+                    mex_file_new_text[crf_line_number] = re.sub(r"'[^']*'", "'%s'" % RunoffFileNew,
+                                                                mex_file_new_text[crf_line_number])
+                else:
+                    mex_file_new_text[crf_line_number] = re.sub(r"'[^']*'",
+                                                                "'%s'" % mex_file_new.replace(".mex", ".CRF"),
+                                                                mex_file_new_text[crf_line_number])
+
+                with open(mex_file_new, 'w') as f:
+                    f.writelines(mex_file_new_text)
+
+                if mouse_sim_launch and ".mex" in mex_file:
+                    while processes and sum(1 for proc in processes if proc.poll() is None) >= LTSCount:
+                        time.sleep(5)
+
+                    if not RunoffFile:
+                        run_cmd = 'cmd.exe /k echo Running: "%s" "%s" "RO" "Run" "Close" "NoPrompt" "-wait" & "%s" "%s" "RO" "Run" "Close" "NoPrompt" "-wait"' % (
+                            mouse_sim_launch, mex_file_new, mouse_sim_launch, mex_file_new
+                        )
+                        subprocess.check_output(run_cmd)
+
+                    run_cmd = 'cmd.exe /k echo Running: "%s" "%s" "HD" "Run" "Close" "NoPrompt" "-wait" & "%s" "%s" "HD" "Run" "Close" "NoPrompt" "-wait"' % (
+                        mouse_sim_launch, mex_file_new, mouse_sim_launch, mex_file_new
+                    )
+                    processes.append(subprocess.Popen(run_cmd))
+                    time.sleep(1)
+
+                elif mike1d_launch and "m1dx" in mex_file:
+                    while processes and sum(1 for proc in processes if proc.poll() is None) >= LTSCount:
+                        time.sleep(5)
+
+                    run_cmd = '"%s" "%s"' % (mike1d_launch, mex_file_new)
+                    processes.append(subprocess.Popen(run_cmd))
+                    time.sleep(1)
+
+
