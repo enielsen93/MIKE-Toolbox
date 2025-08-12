@@ -680,7 +680,7 @@ class CatchmentProcessingScalgo(object):
             def confirm_assignment(num_features):
                 root = tk.Tk()
                 root.withdraw()  # Hide the main window
-                result = messagebox.askyesno("Confirm Assignment", f"Assign imperviousness to {num_features} catchments?")
+                result = messagebox.askyesno("Confirm Assignment", "Assign imperviousness to %d catchments?" % num_features)
                 root.destroy()
                 return result
 
@@ -1932,7 +1932,7 @@ class SetImperviousness(object):
             def confirm_assignment(num_features):
                 root = tk.Tk()
                 root.withdraw()  # Hide the main window
-                result = messagebox.askyesno("Confirm Assignment", f"Assign value to {num_features} features?")
+                result = messagebox.askyesno("Confirm Assignment", "Assign value to %d features?" % num_features)
                 root.destroy()
                 return result
 
