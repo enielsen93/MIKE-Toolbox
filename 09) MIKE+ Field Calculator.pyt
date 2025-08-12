@@ -102,7 +102,7 @@ class FieldCalculator(object):
         return
 
     def execute(self, parameters, messages):
-        featureclasses = parameters[0].ValueAsText.split(";")
+        featureclasses = parameters[0].Values
         field = parameters[1].ValueAsText
         value = parameters[2].ValueAsText
 
@@ -111,8 +111,10 @@ class FieldCalculator(object):
             print(MU_database)
             featureclass_name = arcpy.Describe(featureclass).name
             arcpy.AddMessage(featureclass)
-            selection = [row[0] for row in arcpy.da.SearchCursor(featureclass, ["muid"])]
+
             arcpy.AddMessage("Confirm Query - Might be hidden behind window!")
+            selection = [row[0] for row in arcpy.da.SearchCursor(featureclass, ["MUID"])]
+
             if arcgis_pro:
                 import tkinter as tk
                 from tkinter import messagebox
@@ -135,6 +137,7 @@ class FieldCalculator(object):
                     userquery = pythonaddins.MessageBox(
                         "Are you sure? Assign value to %d features?" % (len(selection)),
                         "Confirm Assignment", 4)
+
             if userquery == "Yes":
                 arcpy.AddMessage(MU_database)
                 if ".sqlite" in MU_database:
