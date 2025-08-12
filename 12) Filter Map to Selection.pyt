@@ -62,7 +62,15 @@ class SetDefinitionQuery(object):
             category="Additional Settings",
             direction="Input")
 
-        parameters = [layer, append, remove_selection, specific_definition_query]
+        apply_to_labels = arcpy.Parameter(
+            displayName="Apply to labels instead of definition query",
+            name="apply_to_labels",
+            datatype="GPBoolean",
+            parameterType="Optional",
+            category="Additional Settings",
+            direction="Input")
+
+        parameters = [layer, append, remove_selection, specific_definition_query, apply_to_labels]
         return parameters
 
     def isLicensed(self):
@@ -102,6 +110,7 @@ class SetDefinitionQuery(object):
         append = parameters[1].Value
         remove_selection = parameters[2].Value
         specific_definition_query = parameters[3].ValueAsText
+        apply_to_labels = parameters[4].Value
 
         def setDefinitionQuery(layer, definition_query):
             if arcgis_pro:
@@ -111,43 +120,89 @@ class SetDefinitionQuery(object):
                 layers = m.listLayers()
                 layer = [lyr for lyr in layers if lyr.name == layer.name and lyr.dataSource == layer.dataSource][0]
 
-
-                layer.updateDefinitionQueries([{"name": "Query 1", "sql": definition_query, "isActive":True}])
+                layer.updateDefinitionQueries([{"name": "Query 1", "sql": definition_query, "isActive": True}])
                 aprx.save()
             else:
                 layer.definitionQuery = definition_query
 
-        for layer in layers:
-            if specific_definition_query: # specific definition query
-                old_definition_query = layer.definitionQuery
-                if old_definition_query and append:
-                    old_definition_query = layer.definitionQuery
-                    if arcgis_pro:
-                        setDefinitionQuery(layer, old_definition_query + " AND " + specific_definition_query)
-                    else:
-                        layer.definitionQuery = old_definition_query + " AND " + specific_definition_query
-                else:
-                    if arcgis_pro:
-                        setDefinitionQuery(layer, specific_definition_query)
-                    else:
-                        layer.definitionQuery = specific_definition_query
-                # layer.updateDefinitionQueries([specific_definition_query])
+        def setLabelQuery(layer, definition_query, append = True):
+            if arcgis_pro:
+                aprx = arcpy.mp.ArcGISProject("CURRENT")
+                m = aprx.activeMap
 
+                layers = m.listLayers()
+                layer = [lyr for lyr in layers if lyr.name == layer.name and lyr.dataSource == layer.dataSource][0]
+
+                for lbl_class in layer.listLabelClasses():
+                    existing_query = lbl_class.SQLQuery.strip()
+
+                    if existing_query and append:
+                        lbl_class.SQLQuery = "{} OR {}".format(existing_query, definition_query)
+                    else:
+                        lbl_class.SQLQuery = definition_query
+                    arcpy.AddMessage(definition_query)
+
+                    lbl_class.showClassLabels = True  # Make sure labeling is enabled
             else:
-                oid_fieldname = arcpy.Describe(layer).OIDFieldName
-                # arcpy.AddMessage([row for row in arcpy.da.SearchCursor(layer, ["muid"], where_clause = "objectid IN (%s)" % (", ".join([str(l) for l in layer.getSelectionSet()])))])
-                # arcpy.AddMessage("objectid IN (%s)" % (", ".join([str(l) for l in layer.getSelectionSet()])))
-                if "muid" in [field.name.lower() for field in arcpy.ListFields(layer)] and "CatchConLink" not in layer.datasetName:
-                    arcpy.AddMessage((layer.getSelectionSet()))
-                    new_definition_query = "muid %sIN ('%s')" % ("NOT " if remove_selection else "", "', '".join([row[0] for row in arcpy.da.SearchCursor(layer, ["muid"], where_clause = "%s IN (%s)" % (oid_fieldname, ", ".join([str(l) for l in layer.getSelectionSet()])))]))
+                raise RuntimeError("This script is currently not supported in ArcMap. Use ArcGIS Pro.")
+
+        if apply_to_labels:
+            for layer in layers:
+                if specific_definition_query:
+                    setLabelQuery(layer, specific_definition_query, append = append)
                 else:
-                    new_definition_query = "%s %sIN (%s)" % (oid_fieldname, "NOT " if remove_selection else "", ", ".join([str(g) for g in layer.getSelectionSet()]))
+                    oid_fieldname = arcpy.Describe(layer).OIDFieldName
+
+                    if "muid" in [field.name.lower() for field in arcpy.ListFields(layer)] and (
+                            hasattr(layer, "datasetName") and "CatchConLink" not in layer.datasetName):
+                        arcpy.AddMessage((layer.getSelectionSet()))
+                        new_definition_query = "muid %sIN ('%s')" % ("NOT " if remove_selection else "", "', '".join(
+                            [row[0] for row in arcpy.da.SearchCursor(layer, ["muid"], where_clause="%s IN (%s)" % (
+                            oid_fieldname, ", ".join([str(l) for l in layer.getSelectionSet()])))]))
+                    else:
+                        new_definition_query = "%s %sIN (%s)" % (oid_fieldname, "NOT " if remove_selection else "",
+                                                                 ", ".join([str(g) for g in layer.getSelectionSet()]))
+
+                    setLabelQuery(layer, new_definition_query, append = append)
+        else:
+            for layer in layers:
+                if specific_definition_query: # specific definition query
+                    old_definition_query = layer.definitionQuery
+                    if old_definition_query and append:
+                        old_definition_query = layer.definitionQuery
+                        if arcgis_pro:
+                            setDefinitionQuery(layer, old_definition_query + " AND " + specific_definition_query)
+                        else:
+                            layer.definitionQuery = old_definition_query + " AND " + specific_definition_query
+                    else:
+                        if arcgis_pro:
+                            setDefinitionQuery(layer, specific_definition_query)
+                        else:
+                            layer.definitionQuery = specific_definition_query
+                    # layer.updateDefinitionQueries([specific_definition_query])
+
+                else:
+                    oid_fieldname = arcpy.Describe(layer).OIDFieldName
+                    # arcpy.AddMessage([row for row in arcpy.da.SearchCursor(layer, ["muid"], where_clause = "objectid IN (%s)" % (", ".join([str(l) for l in layer.getSelectionSet()])))])
+                    # arcpy.AddMessage("objectid IN (%s)" % (", ".join([str(l) for l in layer.getSelectionSet()])))
+                    if "muid" in [field.name.lower() for field in arcpy.ListFields(layer)] and (hasattr(layer, "datasetName") and "CatchConLink" not in layer.datasetName):
+                        arcpy.AddMessage((layer.getSelectionSet()))
+                        new_definition_query = "muid %sIN ('%s')" % ("NOT " if remove_selection else "", "', '".join([row[0] for row in arcpy.da.SearchCursor(layer, ["muid"], where_clause = "%s IN (%s)" % (oid_fieldname, ", ".join([str(l) for l in layer.getSelectionSet()])))]))
+                    else:
+                        new_definition_query = "%s %sIN (%s)" % (oid_fieldname, "NOT " if remove_selection else "", ", ".join([str(g) for g in layer.getSelectionSet()]))
 
 
-                old_definition_query = layer.definitionQuery
-                if old_definition_query and append:
-                    layer.definitionQuery = old_definition_query + " AND " + new_definition_query
-                else:
-                    layer.definitionQuery = new_definition_query
+                    old_definition_query = layer.definitionQuery
+                    if old_definition_query and append:
+                        if arcgis_pro:
+                            setDefinitionQuery(layer, old_definition_query + " AND " + new_definition_query)
+                        else:
+                            layer.definitionQuery = old_definition_query + " AND " + new_definition_query
+
+                    else:
+                        if arcgis_pro:
+                            setDefinitionQuery(layer, new_definition_query)
+                        else:
+                            layer.definitionQuery = new_definition_query
 
         return
