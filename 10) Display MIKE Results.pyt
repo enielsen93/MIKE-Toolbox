@@ -17,6 +17,611 @@ from shutil import copyfile
 import traceback
 import scipy
 
+from matplotlib.ticker import FuncFormatter, MaxNLocator
+
+
+
+def readRes1D(res1d_file, MU_model = None, gdb_path = None, filter_to_extent = None, date_filter = None):
+    from mikeio1d.res1d import Res1D, QueryDataNode, QueryDataReach, QueryDataStructure
+
+    if MU_model:
+        ms_Catchment = os.path.join(MU_model, "ms_Catchment" if ".mdb" in MU_model else "msm_Catchment")
+        msm_CatchCon = os.path.join(MU_model, "msm_CatchCon")
+
+    if filter_to_extent:
+        arcpy.AddMessage("Skipping all reaches and nodes outside extent %s" % filter_to_extent)
+
+    arcpy.AddMessage("Initializing")
+
+    nodes = {}
+    reaches = {}
+    class Node:
+        def __init__(self, muid):
+            self.diameter = None
+            self.net_type_no = 0
+            self.ground_level = 0
+            self.invert_level = 0
+            self.max_level = 0
+            self.id = muid
+            self.max_headloss = 0
+            self.inlet_waterlevel = 0
+            self.outlet_waterlevel = 0
+            self.max_inlet_velocity = 0
+            self.end_depth = 0
+            self.skip = False
+            self.cover_type_no = None
+            self._flood_volume = None
+
+        @property
+        def flood_depth(self):
+            if self.max_level and self.ground_level:
+                return self.max_level - self.ground_level
+            else:
+                return 0
+
+        @property
+        def flood_volume(self):
+            if self._flood_volume:
+                return self._flood_volume
+            else:
+                reservoir_height = -0.25
+                if self.diameter and self.flood_depth>0 and self.cover_type_no != 2:
+                    node_area = self.diameter**2*np.pi/4
+                    integral1 = (math.exp(7*min(1,(self.flood_depth-reservoir_height)))/7-math.exp(7*0)/7)*node_area
+                    integral2 = (max(1, (self.flood_depth-reservoir_height))-1)*node_area*1000
+                    return integral1+integral2
+                else:
+                    return 0
+
+        @flood_volume.setter
+        def flood_volume(self, value):
+            self._flood_volume = value
+
+        @property
+        def flow_area(self):
+            return self.diameter * (self.max_level - self.invert_level) if self.max_level > 0 and self.diameter and self.invert_level else 0
+
+        @property
+        def flow_area_diameter(self):
+            return np.sqrt(self.flow_area*4/np.pi) if self.flow_area > 0 else 0
+
+    class Reach:
+        def __init__(self, muid):
+            self.muid = muid
+            self.net_type_no = 0
+            self.diameter = 0
+            # self.start_coordinate = None
+            # self.end_coordinate = None
+            self.shape = None
+            self.length = None
+            self.uplevel = None
+            self.dwlevel = None
+            self.max_discharge = None
+            self.sum_discharge = None
+            self.end_discharge = None
+            self.min_discharge = None
+            self.fromnode = None
+            self.tonode = None
+            self.type = "Link"
+            self.max_flow_velocity = None
+            self.min_start_water_level = None
+            self.min_end_water_level = None
+            self.max_start_water_level = None
+            self.max_end_water_level = None
+            self.material = None
+            self.skip = False
+            self.tau = None
+            self.depth_difference = None
+
+        @property
+        def energy_line_gradient(self):
+            return ((self.max_start_water_level - self.max_end_water_level) - (self.min_start_water_level-self.min_end_water_level)) / self.shape.length
+
+        @property
+        def friction_loss(self):
+            return (self.max_start_water_level - self.max_end_water_level) - (self.min_start_water_level-self.min_end_water_level)
+
+        @property
+        def fill_degree(self):
+            if all((self.max_start_water_level, self.uplevel, self.diameter)):
+                if (self.max_start_water_level-self.uplevel)/self.diameter*1e2<0:
+                    arcpy.AddMessage((self.max_start_water_level,self.uplevel,self.diameter))
+                return (self.max_start_water_level-self.uplevel)/self.diameter*1e2
+
+        @property
+        def slope(self):
+            if self.uplevel and self.dwlevel and self.length:
+                return (self.uplevel-self.dwlevel)/self.length
+            else:
+                return 10e-3
+
+        @property
+        def QFull(self, resolution = 0.000001):
+            if self.material[0].lower() == "p":
+                k = 0.001 # Plastic roughness
+            else:
+                k = 0.0015 # Concrete roughness (used for all except plastic
+
+            g = 9.82  # m2/s
+            kinematic_viscosity = 0.0000013  # m2/s
+            hydraulic_radius = self.diameter / 4.0 # for full pipes
+            def colebrookWhite(v):
+                Re = v * hydraulic_radius / kinematic_viscosity # Reynolds number
+                f = 0.01 # initial guess for friction number
+                # Iteratively solve the Colebrook-White equation for friction factor f
+                for i in range(4):
+                    f = 2 / (6.4 - 2.45 * np.log(k / hydraulic_radius + 4.7 / (Re * np.sqrt(f)))) ** 2
+
+                # Energy line gradient
+                I = f * (v ** 2 / (2 * g * hydraulic_radius))
+
+                # Return the difference between calculated and actual slope (should equal zero)
+                return I-self.slope
+
+            v = bisect(colebrookWhite, 1e-5, 500, xtol=2e-5, maxiter=50, disp=True)
+            # Return the discharge
+            if v:
+                return v * (self.diameter / 2.0) ** 2 * np.pi
+            else:
+                return None
+
+    class Catchment:
+        def __init__(self, muid):
+            self.muid = muid
+            self.nodeid = None
+            self.nodeid_exists = None
+
+    arcpy.AddMessage("Reading MIKE Database")
+    if MU_model and ".mdb" in MU_model:
+        import pyodbc
+        if not any("Access" in item for item in pyodbc.drivers()):
+            raise Exception("Error. Could not find driver for Microsoft Access! Perhaps Python is 64 bit and Access is 32 bit or vice versa? Install Microsoft Access Database Engine 2016 64 bit from Software Store.")
+        with pyodbc.connect(r'Driver={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=%s;' % (MU_model)) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('select MUID, Diameter, NetTypeNo, groundlevel, criticallevel, invertlevel, covertypeno from msm_Node')
+                rows = cursor.fetchall()
+                for row in rows:
+                    nodes[row[0]] = Node(row[0])
+                    nodes[row[0]].diameter = row[1]
+                    nodes[row[0]].net_type_no = row[2]
+                    nodes[row[0]].ground_level = row[3]
+                    nodes[row[0]].critical_level = row[4]
+                    nodes[row[0]].invert_level = row[5]
+                    nodes[row[0]].cover_type_no = row[6]
+
+                cursor.execute('select MUID, NetTypeNo from msm_Weir')
+                rows = cursor.fetchall()
+                for row in rows:
+                    reaches[row[0]] = Reach(row[0])
+                    reaches[row[0]].net_type_no = row[1]
+                    reaches[row[0]].type = "Weir"
+
+                cursor.execute('select MUID, NetTypeNo, Diameter, uplevel, uplevel_c, dwlevel, dwlevel_c, materialid from msm_Link')
+                rows = cursor.fetchall()
+                for row in rows:
+                    reaches[row[0]] = Reach(row[0])
+                    reaches[row[0]].net_type_no = row[1]
+                    reaches[row[0]].diameter = row[2]
+                    reaches[row[0]].uplevel = row[3] if row[3] else row[4]
+                    reaches[row[0]].dwlevel = row[5] if row[5] else row[6]
+                    reaches[row[0]].material = row[7]
+
+            check_catchment_connections = True
+
+            catchments = {}
+            if check_catchment_connections:
+                cursor.execute('SELECT MUID FROM ms_Catchment')
+                rows = cursor.fetchall()
+                for row in rows:
+                    catchments[row[0]] = Catchment(row[0])
+
+                cursor.execute('SELECT CatchID, NodeID FROM msm_CatchCon')
+                rows = cursor.fetchall()
+                for row in rows:
+                    catchments[row[0]].nodeid = row[1]
+
+                for catchment in catchments.values():
+                    if catchment.nodeid in nodes:
+                        catchment.nodeid_exists = True
+                    else:
+                        catchment.nodeid_exists = False
+
+    elif MU_model and ".sqlite" in MU_model:
+        with arcpy.da.SearchCursor(os.path.join(MU_model, "msm_Node"), ["MUID", "Diameter", "NetTypeNo", "GroundLevel", "CriticalLevel", "InvertLevel", "CoverTypeNo"]) as cursor:
+            for row in cursor:
+                nodes[row[0]] = Node(row[0])
+                nodes[row[0]].diameter = row[1]
+                nodes[row[0]].net_type_no = row[2]
+                nodes[row[0]].ground_level = row[3]
+                nodes[row[0]].critical_level = row[4]
+                nodes[row[0]].invert_level = row[5]
+                nodes[row[0]].cover_type_no = row[6]
+
+        with arcpy.da.SearchCursor(os.path.join(MU_model, "msm_Weir"), ["MUID", "NetTypeNo"]) as cursor:
+            for row in cursor:
+                reaches[row[0]] = Reach(row[0])
+                reaches[row[0]].net_type_no = row[1]
+                reaches[row[0]].type = "Weir"
+
+        with arcpy.da.SearchCursor(os.path.join(MU_model, "msm_Link"), ["MUID", "NetTypeNo", "Diameter", "uplevel", "uplevel_c", "dwlevel", "dwlevel_c", "MaterialID"]) as cursor:
+            for row in cursor:
+                reaches[row[0]] = Reach(row[0])
+                reaches[row[0]].net_type_no = row[1]
+                reaches[row[0]].diameter = row[2]
+                reaches[row[0]].uplevel = row[3] if row[3] else row[4]
+                reaches[row[0]].dwlevel = row[5] if row[5] else row[6]
+                reaches[row[0]].material = row[7]
+
+        check_catchment_connections = True
+
+        catchments = {}
+        if check_catchment_connections and MU_model:
+            with arcpy.da.SearchCursor(os.path.join(MU_model, "msm_Catchment"), ["MUID"]) as cursor:
+                for row in cursor:
+                    catchments[row[0]] = Catchment(row[0])
+
+            with arcpy.da.SearchCursor(os.path.join(MU_model, "msm_CatchCon"), ["CatchID", "NodeID"]) as cursor:
+                for row in cursor:
+                    catchments[row[0]].nodeid = row[1]
+
+            for catchment in catchments.values():
+                if catchment.nodeid in nodes:
+                    catchment.nodeid_exists = True
+                else:
+                    catchment.nodeid_exists = False
+
+    # res1d_file = r"C:\Users\ELNN\OneDrive - Ramboll\Documents\Aarhus Vand\Kongelund og Marselistunnel\MIKE\KOM_Plan_017_sc2\KOM_Plan_017_sc2_CDS_5Base.res1d"
+    arcpy.AddMessage("Reading %s" % res1d_file)
+    # queries = []
+
+    extension = extension if 'extension' in locals() else ""
+
+    if date_filter:
+        def convertDate(date_str):
+            date_str = date_str.strip()
+            print(date_str)
+
+            # Special case: only year
+            if date_str.isdigit() and len(date_str) == 4:
+                return datetime.datetime(int(date_str), 1, 1)
+
+            formats = [
+                "%d-%m-%Y",
+                "%d/%m/%Y",
+                "%d.%m.%Y",
+                "%d-%m-%y",
+                "%d/%m/%y",
+                "%d.%m.%y",
+                "%d-%m",  # Assume current year
+                "%d/%m",
+                "%d.%m",
+                "%Y-%m-%d"
+            ]
+
+            for fmt in formats:
+                try:
+                    parsed = datetime.datetime.strptime(date_str, fmt)
+                    # If no year was provided (default is 1900), use current year
+                    if parsed.year == 1900:
+                        parsed = parsed.replace(year=datetime.now().year)
+                    return parsed
+                except ValueError:
+                    continue
+
+            raise ValueError(f"Failed to interpret date: {date_str}")
+
+        time_filter = convertDate(date_filter.split(" - ")[0]), convertDate(date_filter.split(" - ")[1])
+    res1d = Res1D(res1d_file)#, time = time_filter if date_filter else None)
+
+    arcpy.AddMessage("Reading Geometry from res1d")
+    res1d_nodes = [node for node in res1d.data.Nodes]
+    for reach in [r for r in res1d.data.Reaches if r.Name.replace("Weir:","") in reaches]:
+        muid = reach.Name.replace("Weir:","")
+
+        # reaches[muid].shape = arcpy.Polyline(arcpy.Array([arcpy.Point(coordinate.X, coordinate.Y) for coordinate in reach.GridPoints]))
+        reaches[muid].shape = arcpy.Polyline(
+            arcpy.Array([arcpy.Point(coordinate.X, coordinate.Y) for coordinate in reach.GridPoints]))
+        if filter_to_extent and not (reaches[muid].shape[0][0].X > filter_to_extent[0] and reaches[muid].shape[0][0].X < filter_to_extent[2]
+                and reaches[muid].shape[0][0].Y > filter_to_extent[1] and reaches[muid].shape[0][0].Y < filter_to_extent[3]):
+            reaches[muid].skip = True
+
+        reaches[muid].fromnode = res1d_nodes[reach.StartNodeIndex].ID
+        reaches[muid].tonode = res1d_nodes[reach.EndNodeIndex].ID
+        reaches[muid].length = reach.Length
+
+    df = res1d
+
+    # dataframe = df.read()
+    arcpy.AddMessage("Creating Shapefiles")
+    arcpy.env.overwriteOutput = True
+    output_folder = r"C:\Papirkurv\Resultater"
+
+    def getAvailableFilename(filepath):
+        if arcpy.Exists(filepath):
+            i = 1
+            while arcpy.Exists(filepath + "%d" % i):
+                i += 1
+            return filepath + "%d" % i
+        else:
+            return filepath
+
+
+    # nodes_new_filename = getAvailableFilename(os.path.join(output_folder, os.path.basename(res1d_file).replace(".res1d","_nodes%s.shp" % extension)))
+    #
+    # links_new_filename = getAvailableFilename(os.path.join(output_folder, os.path.basename(res1d_file).replace(".res1d","_links%s.shp" % extension)))
+
+    arcpy.AddMessage("Creating Nodes and Reaches")
+    # output_folder = r"C:\path\to\output"  # Replace with your path
+    # gdb_name = os.path.basename(res1d_file).replace(".res1d","_results%s" % extension) + ".gdb"
+    nodes_new_filename = "%s_Nodes" % os.path.basename(res1d_file).replace(".res1d","").replace("Base","").replace("Result_file","")
+    links_new_filename = "%s_Reaches" % os.path.basename(res1d_file).replace(".res1d","").replace("Base","").replace("Result_file","")
+
+    # gdb_path = arcpy.env.ScratchGDB
+    nodes_output_filepath = os.path.join(gdb_path, nodes_new_filename)
+    links_output_filepath = os.path.join(gdb_path, links_new_filename)
+
+    while True:
+        try:
+            if not arcpy.Exists(gdb_path):
+                arcpy.CreateFileGDB_management(output_folder, gdb_name)
+
+            fields = ["Diameter", "Ground_lev", "Invert_lev", "Max_elev", "Flood_dep", "Flood_vol", "max_hl",
+                      "max_I_V", "flow_area", "flow_diam", "end_depth", "Surcha", "SurchaBal", "MaxSurcha"]
+            if arcpy.Exists(nodes_output_filepath):
+                arcpy.DeleteFeatures_management(nodes_output_filepath)
+                existing_fields = [f.name for f in arcpy.ListFields(nodes_output_filepath)]
+                for field in fields:
+                    if field not in existing_fields:
+                        arcpy.management.AddField(nodes_output_filepath, field, "FLOAT")
+            else:
+                nodes_output_filepath = arcpy.CreateFeatureclass_management(gdb_path, nodes_new_filename, "POINT")[0]
+                arcpy.management.AddField(nodes_output_filepath, "MUID", "TEXT")
+                arcpy.management.AddField(nodes_output_filepath, "NetTypeNo", "SHORT")
+
+                # for field in ["Diameter", "Ground_lev", "Invert_lev", "Max_elev", "Flood_dep", "Flood_vol", "max_hl", "max_I_V", "flow_area", "flow_diam", "end_depth", "Surcha", "SurchaBal", "MaxSurcha"]:
+                # arcpy.management.AddField(nodes_output_filepath, field, "FLOAT", 8, 2)
+                arcpy.management.AddFields(nodes_output_filepath, [[field, "FLOAT"] for field in fields])
+
+            fields = ["Diameter", "MaxQ", "SumQ", "EndQ", "MinQ", "MaxV", "FillDeg", "EnergyGr", "FrictionLo",
+                              "MaxTau", "Depthdiff"]
+            if arcpy.Exists(links_output_filepath):
+                arcpy.DeleteFeatures_management(links_output_filepath)
+
+                existing_fields = [f.name for f in arcpy.ListFields(links_output_filepath)]
+                for field in fields:
+                    if field not in existing_fields:
+                        arcpy.management.AddField(links_output_filepath, field, "FLOAT")
+            else:
+                links_output_filepath = arcpy.CreateFeatureclass_management(gdb_path, links_new_filename, "POLYLINE")[0]
+                arcpy.management.AddField(links_output_filepath, "MUID", "TEXT")
+                arcpy.management.AddField(links_output_filepath, "NetTypeNo", "SHORT")
+                arcpy.management.AddField(links_output_filepath, "FromNode", "TEXT")
+                arcpy.management.AddField(links_output_filepath, "ToNode", "TEXT")
+                arcpy.management.AddFields(links_output_filepath, [[field, "FLOAT"] for field in fields])
+
+            # Adding metadata
+            metadata_tablename = "Metadata"
+            if arcpy.Exists(os.path.join(gdb_path, metadata_tablename)):
+                try:
+                    arcpy.management.DeleteRows(os.path.join(gdb_path, metadata_tablename))
+                except Exception as e:
+                    arcpy.AddMessage(e)
+                    arcpy.AddMessage(os.path.join(gdb_path, metadata_tablename))
+                    pass
+            else:
+                metadata_filepath = arcpy.management.CreateTable(gdb_path, metadata_tablename)[0]
+                arcpy.management.AddField(metadata_filepath, "res1d_path", "TEXT", field_length=500)
+                arcpy.management.AddField(metadata_filepath, "simulation_date", "DATE")
+                arcpy.management.AddField(metadata_filepath, "result_analysis_date", "DATE")
+
+            with arcpy.da.InsertCursor(os.path.join(gdb_path, metadata_tablename), ["res1d_path", "simulation_date", "result_analysis_date"]) as cursor:
+                cursor.insertRow([res1d_file, datetime.datetime.fromtimestamp(os.path.getmtime(res1d_file)), datetime.datetime.now()])
+
+
+            break
+        except arcpy.ExecuteError as e:
+            if "ERROR 000464: Cannot get exclusive schema lock" in str(e):
+                input("The file %s is locked. Press enter to retry, after unlocking the file..." % fc_path)
+            else:
+                raise
+
+    def bretting(y, max_discharge, full_discharge, di):
+        q_div_qf = 0.46 - 0.5 * math.cos(np.pi * y / di) + 0.04 * math.cos(2 * np.pi * y / di)
+        # return q_div_qf
+        return q_div_qf - max_discharge / full_discharge
+
+    for reach in res1d.reaches.values():
+        if reach.group == "Reach":
+            reach_quantities = reach.quantities
+
+    timeseries = [time.timestamp() for time in df.time_index]
+    arcpy.AddMessage("Reading and writing Reach Results")
+    with arcpy.da.InsertCursor(links_output_filepath, ["SHAPE@", "MUID", "Diameter", "FromNode", "ToNode", "MaxQ", "SumQ", "NetTypeNo", "EndQ", "MinQ", "MaxV", "EnergyGr", "FrictionLo", "FillDeg", "MaxTau", "Depthdiff"]) as cursor:
+        for muid in set(reaches.keys()):
+            reach = reaches[muid]
+            if not reach.skip:
+                if muid in res1d.reaches.keys():
+                    queries = []
+                    query_labels = []
+                    for quantity in ["Discharge", "FlowVelocity", "WaterLevel"]:
+                        if quantity in reach_quantities:
+                            if quantity == "WaterLevel":
+                                queries.append(QueryDataReach(quantity, muid, 0))
+                                query_labels.append("WaterLevel_start")
+                                queries.append(QueryDataReach(quantity, muid, reach.length))
+                                query_labels.append("WaterLevel_end")
+                            else:
+                                queries.append(QueryDataReach(quantity, muid, reach.length))
+                                query_labels.append(quantity)
+
+                    query_result = res1d.read(queries)
+                    query_result.columns = query_labels
+                    # reach_discharge = query_result.iloc[:,0]
+                    if "Discharge" in reach_quantities:
+                        reach.max_discharge = np.max(abs(query_result["Discharge"]))
+                        reach.min_discharge = np.min(query_result["Discharge"])
+                        reach.sum_discharge = np.trapz(abs(query_result["Discharge"]), timeseries)
+                        reach.end_discharge = np.round((abs(query_result["Discharge"][-1])), 2)
+                    if "FlowVelocity" in reach_quantities:
+                        reach.max_flow_velocity = np.max(abs(query_result["FlowVelocity"]))
+                    if "WaterLevel" in reach_quantities:
+                        reach_start_values = query_result["WaterLevel_start"]
+                        reach_end_values = query_result["WaterLevel_end"]
+                        reach.min_start_water_level = np.min(abs(reach_start_values))
+                        reach.min_end_water_level = np.min(abs(reach_end_values))
+                        reach.max_start_water_level = np.max(abs(reach_start_values))
+                        reach.max_end_water_level = np.max(abs(reach_end_values))
+
+                    # Calculate tau
+                    try:
+                        full_discharge = reach.QFull
+                        if reach.max_discharge < full_discharge:
+                            water_level = bisect(bretting, 0, reach.diameter,
+                                                 args=(reach.max_discharge, full_discharge, reach.diameter), xtol=0.002,
+                                                 maxiter=100)
+                            radius = reach.diameter / 2
+                            theta = 2 * math.acos((radius - water_level) / radius)
+                            if water_level < radius / 2:
+                                wet_perimeter = radius * theta
+                                wet_area = (radius ** 2 * (theta - math.sin(theta))) / 2
+                            else:
+                                wet_perimeter = 2 * np.pi * radius - radius * theta
+                                wet_area = np.pi * radius ** 2 - (radius ** 2 * (theta - math.sin(theta))) / 2
+                            hydraulic_radius = wet_area / wet_perimeter
+                            reach.tau = 999.7 * 9.81 * reach.slope * hydraulic_radius
+                        else:
+                            reach.tau = 1e3
+                    except Exception as e:
+                        pass
+
+                    # Calculate Depth Difference
+                    if reach.fromnode in df.nodes and reach.tonode in df.nodes:
+                        reach.depth_difference = (reach.max_start_water_level - df.nodes[
+                            reach.fromnode].bottom_level) - (reach.max_end_water_level - df.nodes[
+                            reach.tonode].bottom_level)
+                elif muid in res1d.structures.keys():
+                    try:
+                        queries = [QueryDataStructure("Discharge", muid)]
+                        query_result = res1d.read(queries)
+                        reach_discharge = query_result.iloc[:, 0]
+                        reach.max_discharge = np.max(abs(reach_discharge))
+                        reach.min_discharge = np.min(reach_discharge)
+                        reach.sum_discharge = np.trapz(abs(reach_discharge), timeseries)
+                        reach.end_discharge = np.round(abs(reach_discharge[-1]),4)
+
+                    except Exception as e:
+                        warnings.warn("Failed to get discharge from %s" % (muid))
+
+                # if True:
+                if all((reach.min_start_water_level, reach.min_end_water_level, reach.max_start_water_level, reach.max_end_water_level)):
+                    energy_line_gradient = reach.energy_line_gradient
+                    friction_loss = reach.friction_loss
+                else:
+                    energy_line_gradient = 0
+                    friction_loss = 0
+                cursor.insertRow([reach.shape, muid, reach.diameter if reach.diameter and reach.diameter>0 else 0, reach.fromnode, reach.tonode, reach.max_discharge or 0, reach.sum_discharge or 0,
+                              reach.net_type_no or 0, reach.end_discharge or 0,
+                                  reach.min_discharge or 0, reach.max_flow_velocity or 0,
+                                  energy_line_gradient, friction_loss, reach.fill_degree or 0, reach.tau or 0, reach.depth_difference or 0])
+    res1d_quantities = res1d.quantities
+
+    arcpy.AddMessage("Reading and writing Node Results")
+    with arcpy.da.InsertCursor(nodes_output_filepath, ["SHAPE@", "MUID", "Diameter", "Invert_lev", "Max_elev", "Flood_dep", "Flood_vol", "NetTypeNo", "max_hl", "max_I_V", "flow_area", "flow_diam", "end_depth", "Surcha", "SurchaBal", "MaxSurcha", "Ground_lev"]) as cursor:
+        for query_node in df.data.Nodes:
+            muid = query_node.ID
+
+            if muid not in nodes:
+                nodes[muid] = Node(muid)
+
+            if filter_to_extent and not (
+                    query_node.XCoordinate > filter_to_extent[0] and query_node.XCoordinate < filter_to_extent[2]
+                    and query_node.YCoordinate > filter_to_extent[1] and query_node.YCoordinate < filter_to_extent[3]):
+                nodes[muid].skip = True
+
+            if not nodes[muid].skip:
+                node = nodes[muid]
+                try:
+                    if not node.ground_level:
+                        node.ground_level = query_node.CriticalLevel if hasattr(query_node, 'CriticalLevel') and query_node.CriticalLevel else query_node.GroundLevel
+                    if not node.invert_level:
+                        query_node.BottomLevel
+                except Exception as e:
+                    arcpy.AddMessage(e)
+
+                queries = [QueryDataNode("WaterLevel", muid)]
+                query_result = res1d.read(queries)
+                node.max_level = np.max(query_result.iloc[:,0])
+                node.end_depth = query_result.iloc[-1, 0] - node.invert_level
+                if "WaterVolumeAboveGround" in res1d_quantities:
+                    query = QueryDataNode("WaterVolumeAboveGround", muid)
+                    try:
+                        query_result = res1d.read(query)
+                        node.flood_volume = np.max(np.max(query_result.iloc[:, 0]))
+                    except Exception as e:
+                        pass
+
+                max_surcharge = None
+                surcharge = None
+                surcharge_balance = None
+                if "DischargeToSurface" in res1d_quantities:# and any(["DischargeToSurface" in str(dataitem.Quantity) for dataitem in res1d.nodes[muid].DataItems]):
+                    query = QueryDataNode("DischargeToSurface", muid)
+                    try:
+                        query_result = res1d.read(query)
+                        positive_surcharge = query_result.iloc[:, 0].copy()
+                        positive_surcharge[positive_surcharge<0] = 0
+                        surcharge = np.trapz(positive_surcharge, timeseries)
+                        surcharge_balance = np.trapz(query_result.iloc[:, 0], timeseries)
+                        max_surcharge = np.max(query_result.iloc[:, 0])
+                    except Exception as e:
+                        arcpy.AddMessage(e)
+
+                if "DivertedRunoffToSurface" in res1d_quantities:# and any(
+                    #["DivertedRunoffToSurface" in str(dataitem.Quantity) for dataitem in res1d.nodes[muid].DataItems]):
+                    query = QueryDataNode("DivertedRunoffToSurface", muid)
+                    try:
+                        query_result = res1d.read(query)
+                        diverted_runoff_to_surface = query_result.iloc[:, 0]
+                        surcharge += np.trapz(diverted_runoff_to_surface, timeseries)
+                        surcharge_balance += np.trapz(diverted_runoff_to_surface, timeseries)
+                        # if surcharge>0://
+                        #     plt.plot(timeseries,query_result.iloc[:, 0])
+                        # max_surcharge += np.trapz(query_result.iloc[:, 0], timeseries)
+                    except Exception as e:
+                        arcpy.AddMessage(e)
+
+                if muid in [reach.tonode for reach in reaches.values()] and muid in [reach.fromnode for reach in reaches.values()]:
+                    try:
+                        water_levels = [reach.max_end_water_level for reach in reaches.values() if reach.tonode == muid and reach.type == "Link" and reach.max_end_water_level]
+                        node.inlet_waterlevel = np.max(water_levels) if water_levels else 0
+                        water_levels = [reach.max_start_water_level for reach in reaches.values() if reach.fromnode == muid and reach.type == "Link"]
+                        node.outlet_waterlevel = np.max(water_levels) if water_levels else 0
+                        node.max_headloss = node.inlet_waterlevel - node.outlet_waterlevel if all([node.inlet_waterlevel, node.outlet_waterlevel]) else 0
+                        inlet_velocities = [reach.max_flow_velocity for reach in reaches.values() if reach.tonode == muid and reach.type == "Link" and reach.max_flow_velocity]
+                        node.max_inlet_velocity = np.max(inlet_velocities) if inlet_velocities else 0
+
+                    except Exception as e:
+                        arcpy.AddMessage(muid)
+                        arcpy.AddMessage(traceback.format_exc())
+                        arcpy.AddMessage(e)
+
+                cursor.insertRow([arcpy.Point(query_node.XCoordinate, query_node.YCoordinate), muid, node.diameter or 0,
+                                  node.invert_level, node.max_level, node.flood_depth, node.flood_volume or 0,
+                                  node.net_type_no or 0, node.max_headloss or 0,
+                                  node.max_inlet_velocity or 0, node.flow_area, node.flow_area_diameter, node.end_depth or 0,
+                                  surcharge or 0, surcharge_balance or 0, max_surcharge or 0, node.ground_level or 0])
+
+    if MU_model and len([catchment for catchment in catchments.values() if not catchment.nodeid])>0:
+        arcpy.AddMessage("%d catchments not connected. ('%s')" % (len([catchment for catchment in catchments.values() if not catchment.nodeid_exists]), "', '".join([catchment.muid for catchment in catchments.values() if not catchment.nodeid])))
+
+    if MU_model and len([catchment for catchment in catchments.values() if not catchment.nodeid_exists])>0:
+        arcpy.AddMessage("%d catchments connected to missing node. ('%s')" % (len([catchment for catchment in catchments.values() if not catchment.nodeid_exists]),
+                                                                   "', '".join([catchment.muid for catchment in catchments.values() if not catchment.nodeid_exists])))
+
+    now = datetime.datetime.now()
+    arcpy.AddMessage("Code run at %s - simulation run at %s" % (now.strftime("%H:%M"), datetime.datetime.fromtimestamp(os.path.getmtime(res1d_file)).strftime("%H:%M")))
+    
+    return nodes_output_filepath, links_output_filepath
+
 def m11extrapath():
     m11extraPath = r"C:\Program Files (x86)\DHI\2016\bin\m11extra.exe"
     i = 2030
@@ -53,8 +658,10 @@ class Toolbox(object):
         self.alias  = "Display Mike Urban Results"
 
         # List of tool classes associated with this toolbox
-        self.tools = [DisplayFloodReturnPeriodFun, DisplayWeirStatistics, DisplayFlowStatistics, DisplayQFullQMax, DisplayWeirReturnPeriod, DisplayMIKE1DResults, DisplayExtent]
-
+        if arcgis_pro:
+            self.tools = [DisplayMIKE1DResults, ReadMIKE1DResults, PlotRes1D]
+        else:
+            self.tools = [DisplayFloodReturnPeriodFun, DisplayWeirStatistics, DisplayFlowStatistics, DisplayQFullQMax, DisplayWeirReturnPeriod, DisplayMIKE1DResults, DisplayExtent]
 class DisplayFloodReturnPeriodFun(object):
     def __init__(self):
         self.label       = "Display Flood Return Period"
@@ -100,6 +707,7 @@ class DisplayFloodReturnPeriodFun(object):
         #     datatype="DEFeatureClass",
         #     parameterType="Required",
         #     direction="Output")
+
         #
         # exportBasins = arcpy.Parameter(
         #     displayName="Output basins with Flood Return Period",
@@ -1367,8 +1975,8 @@ class DisplayWeirReturnPeriod(object):
 
 class DisplayMIKE1DResults(object):
     def __init__(self):
-        self.label = "Display MIKE1D Results (alpha)"
-        self.description = "Display MIKE1D Results (alpha)"
+        self.label = "a) Display MIKE1D Results"
+        self.description = "a) Display MIKE1D Results"
         self.canRunInBackground = False
 
     def getParameterInfo(self):
@@ -1720,3 +2328,851 @@ class DisplayExtent(object):
         copy2clip("[%d, %d, %d, %d]" % (df.extent.lowerLeft.X, df.extent.lowerLeft.Y, df.extent.upperRight.X, df.extent.upperRight.Y))
         arcpy.AddMessage("[%d, %d, %d, %d]" % (df.extent.lowerLeft.X, df.extent.lowerLeft.Y, df.extent.upperRight.X, df.extent.upperRight.Y))
         return
+
+
+class DrawSelection(object):
+    def __init__(self):
+        self.label = "2) Draw Results for Selection"
+        self.description = "2) Draw Results for Selection"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        # Define parameter definitions
+
+        pipe_layer = arcpy.Parameter(
+            displayName="Pipe feature layer",
+            name="pipe_layer",
+            datatype="GPFeatureLayer",
+            parameterType="Optional",
+            direction="Input")
+
+        result_files = arcpy.Parameter(
+            displayName="RES1D Network Result Files",
+            name="result_files",
+            datatype="File",
+            multiValue=True,
+            parameterType="optional",
+            direction="Input")
+        result_files.filter.list = ["res1d"]
+        #
+        # # # new_names (auto-filled)
+        # # new_names = arcpy.Parameter(
+        # #     displayName="New Names",
+        # #     name="Rename of Result Files?",
+        # #     datatype="String",
+        # #     multiValue=True,
+        # #     parameterType="Optional",
+        # #     direction="Input"
+        # # )
+        #
+        # pdf_output = arcpy.Parameter(
+        #     displayName="PDF Output",
+        #     name="pdf_output",
+        #     datatype="File",
+        #     parameterType="Optional",
+        #     direction="Output")
+        # # pdf_output.filter.list = ["pdf"]
+        #
+        # default_name = "Longitudinal Profiles.pdf"
+        # default_path = os.path.join(arcpy.env.scratchFolder, default_name)
+        # pdf_output.value = default_path
+        #
+        # overwrite_or_append = arcpy.Parameter(
+        #     displayName="Append to PDF (Default is overwrite)",
+        #     name="overwrite_or_append",
+        #     datatype="Boolean",
+        #     parameterType="optional",
+        #     direction="Input")
+        #
+        # backup_tempfile = arcpy.Parameter(
+        #     displayName="Backup Temp File Path",
+        #     name="backup_tempfile",
+        #     datatype="String",
+        #     parameterType="Derived",  # hidden and not user editable
+        #     direction="Output")
+
+
+        parameters = [pipe_layer, result_files, ]
+        return parameters
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        backup_tempfile = parameters[4]
+        if arcgis_pro:
+            # Reference the active map in the current project
+            aprx = arcpymapping.ArcGISProject("CURRENT")
+            map_view = aprx.activeMap
+
+            # List layers with selected features
+            layers = None
+            for layer in map_view.listLayers():
+                try:
+                    if layer.getSelectionSet() and arcpy.Describe(layer).shapeType == "Polyline":
+                        layers = layer.longName
+                        break
+                except:
+                    pass
+        else:
+            mxd = arcpy.mapping.MapDocument("CURRENT")
+            df = arcpy.mapping.ListDataFrames(mxd)[0]
+            layers = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
+                      lyr.getSelectionSet() if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'][0]
+
+        if layers and not parameters[0].ValueAsText:
+            parameters[0].value = layers
+
+        pdf_output = parameters[2]
+        overwrite_or_append = parameters[3]
+        if pdf_output.ValueAsText and os.path.exists(pdf_output.ValueAsText):
+            overwrite_or_append.enabled = True
+            if overwrite_or_append.enabled:
+                import tempfile
+                import shutil
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
+                    temp_backup_path = temp_file.name
+
+                # Copy the existing file to this temp file
+                shutil.copy2(pdf_output.ValueAsText, temp_backup_path)
+                backup_tempfile.value = temp_backup_path
+
+
+        else:
+            overwrite_or_append.enabled = False
+
+        # if parameters[1].altered and parameters[1].Values and not parameters[2].altered:  # result_files
+        #     input_files = parameters[1].values
+        #     cleaned_names = []
+        #
+        #     for path in input_files:
+        #         basename = os.path.basename(str(path))
+        #         basename = os.path.splitext(basename)[0]
+        #         # Remove unwanted substrings
+        #         cleaned = basename.replace("Default_Network_HD", "") \
+        #             .replace("Default_Network", "") \
+        #             .replace("Default", "") \
+        #             .replace("HD", "")
+        #         cleaned = cleaned.strip("_- ")  # Clean up any leftover junk
+        #         cleaned_names.append(cleaned)
+        #
+        #     parameters[2].values = cleaned_names
+        return
+
+    def updateMessages(self, parameters):  # optional
+
+        return
+
+    def execute(self, parameters, messages):
+        pipe_layer = parameters[0].Value
+
+        if arcgis_pro:
+            from mikeio1d import open as open_res1d
+            from mikeio1d.res1d import Res1D, QueryDataNode, QueryDataReach, QueryDataStructure
+            from shapely import wkb
+            aprx = arcpy.mp.ArcGISProject("CURRENT")
+            map_obj = aprx.activeMap
+            view = aprx.activeView
+            old_scale = map_obj.referenceScale
+        else:
+            mxd = arcpy.mapping.MapDocument("CURRENT")
+            df = arcpy.mapping.ListDataFrames(mxd)[0]
+
+        result_files = [f.replace("'", "") for f in parameters[1].ValueAsText.split(";")] if parameters[1].ValueAsText else None
+        output_pdf = parameters[2].ValueAsText
+        overwrite_or_append = parameters[3].Value
+        backup_tempfile = parameters[4].Value
+
+        pipe_layer_reference = pipe_layer
+        for lyr in (map_obj.listLayers() if arcgis_pro else arcpy.mapping.ListLayers(mxd)):
+            if lyr.name == pipe_layer.name and lyr.getSelectionSet():
+                pipe_layer_reference = lyr
+                break
+
+        selection_set = pipe_layer_reference.getSelectionSet()
+
+
+class ReadMIKE1DResults(object):
+    def __init__(self):
+        self.label = "1) Read MIKE1D Results"
+        self.description = "1) Read MIKE1D Results"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        # Define parameter definitions
+
+        # Input Features parameter
+        res1d_filepath = arcpy.Parameter(
+            displayName="Res1D Filepath",
+            name="res1d_filepath",
+            datatype="File",
+            multiValue=True,
+            parameterType="Required",
+            direction="Input")
+        res1d_filepath.filter.list = ["res1d"]
+
+        mike_database = arcpy.Parameter(
+            displayName="MIKE+ database",
+            name="mike_database",
+            datatype="File",
+            parameterType="Optional",
+            direction="Input")
+        mike_database.filter.list = ["sqlite"]
+
+        display_type = arcpy.Parameter(
+            displayName="Display with fitting symbology",
+            name="display_type",
+            datatype="GPString",
+            parameterType="Optional",
+            multiValue=True,
+            direction="Input")
+        display_type.filter.list = ["Flood Volume", "Flood Depth", "Max Elevation / Headloss", "Surcharge Balance", "Peak Discharge", "Link Depth Difference", "Total Discharge"]
+        display_type.value = ["Flood Volume", "Peak Discharge"]
+
+        display_results = arcpy.Parameter(
+            displayName="Display Results",
+            name="display_results",
+            datatype="Boolean",
+            parameterType="Optional",
+            direction="Input"
+        )
+        display_results.value = True
+
+        read_only_extent = arcpy.Parameter(
+            displayName="Read only results in ArcGIS Pro Extent",
+            name="read_only_extent",
+            datatype="Boolean",
+            parameterType="Optional",
+            direction="Input"
+        )
+
+        date_filter = arcpy.Parameter(
+            displayName="Filter results to these dates (StartDate - EndDate)",
+            name="date_filter",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input"
+        )
+        date_filter.category = "Filter results"
+
+        parameters = [res1d_filepath, mike_database, display_type, display_results, read_only_extent, date_filter]
+
+        return parameters
+
+    def isLicensed(self):  # optional
+        return True
+
+    def updateParameters(self, parameters):  # optional
+        res1d_filepaths = [f.replace("'", "") for f in parameters[0].ValueAsText.split(";")] if parameters[0].ValueAsText else None
+        if res1d_filepaths:
+            res1d_filepath = res1d_filepaths[0]
+        else:
+            res1d_filepath = None
+
+        display_results = parameters[3]
+        display_type = parameters[2]
+        if display_results.Value:
+            display_type.enabled = True
+        else:
+            display_type.enabled = False
+
+        if res1d_filepath and not parameters[1].Value:
+            model_folder = os.path.dirname(os.path.dirname(res1d_filepath))
+            MU_model = os.path.join(model_folder, os.path.basename(model_folder)) + ".sqlite"
+
+            if os.path.exists(MU_model):
+                parameters[1].Value = MU_model
+            else:
+                model_folder = os.path.dirname(res1d_filepath)
+                MU_model = os.path.join(model_folder, os.path.basename(model_folder)) + ".mdb"
+                if os.path.exists(MU_model):
+                    parameters[1].Value = MU_model
+                    # print("Assuming MIKE database is %s" % (MU_model))
+        return
+
+    def updateMessages(self, parameters):  # optional
+        return
+
+    def execute(self, parameters, messages):
+        from mikeio1d.res1d import Res1D, QueryDataNode, QueryDataReach, QueryDataStructure
+        res1d_filepaths = [f.replace("'", "") for f in parameters[0].ValueAsText.split(";")] if parameters[0].ValueAsText else None
+        mike_database = parameters[1].ValueAsText
+        display_type = parameters[2].ValueAsText
+        display_results = parameters[3].Value
+        read_only_extent = parameters[4].Value
+        date_filter = parameters[5].Value
+
+        if read_only_extent:
+            aprx = arcpy.mp.ArcGISProject("CURRENT")
+            extent = aprx.activeView.camera.getExtent()
+
+        for res1d_filepath in res1d_filepaths:
+            nodes_featureclass, reaches_featureclass = readRes1D(res1d_filepath, mike_database, gdb_path = arcpy.env.scratchGDB, filter_to_extent = [extent.lowerLeft.X-50, extent.lowerLeft.Y-50, extent.upperRight.X+50, extent.upperRight.Y+50] if read_only_extent else None, date_filter = None)
+            arcpy.AddMessage("BOBOBOBOB")
+            arcpy.AddMessage(date_filter is None)
+            nodes_featureclass = arcpy.Describe(nodes_featureclass).catalogPath
+            reaches_featureclass = arcpy.Describe(reaches_featureclass).catalogPath
+
+            if display_results:
+                if arcgis_pro:
+                    mxd = arcpy.mp.ArcGISProject("CURRENT")
+                    df = mxd.listMaps()[0]
+                else:
+                    mxd = arcpy.mapping.MapDocument("CURRENT")
+                    df = arcpy.mapping.ListDataFrames(mxd)[0]
+
+                empty_group_mapped = arcpymapping.LayerFile(os.path.dirname(
+                    os.path.realpath(__file__)) + r"\Data\EmptyGroup.lyr") if arcgis_pro else arcpy.mapping.Layer(
+                    os.path.dirname(os.path.realpath(__file__)) + r"\Data\EmptyGroup.lyr")
+                empty_group = df.addLayer(empty_group_mapped) if arcgis_pro else arcpymapping.AddLayer(df, empty_group_mapped,
+                                                                                                       "TOP")
+                empty_group_layer = df.listLayers('Empty Group')[0] if arcgis_pro else \
+                    arcpymapping.ListLayers(mxd, "Empty Group", df)[0]
+                # if (nodes_featureclass and ".gdb" in nodes_featureclass) or (reaches_featureclass and ".gdb" in reaches_featureclass):
+                empty_group_layer.name = os.path.basename(res1d_filepath).replace(".res1d","").replace("Base","").replace("Result_file","")
+
+                def addLayer(layer_source, source, group=None, workspace_type="ACCESS_WORKSPACE", new_name=None,
+                             definition_query=None):
+                    if arcgis_pro and not ".lyrx" in layer_source and os.path.exists(layer_source.replace(".lyr", ".lyrx")):
+                        layer_source = layer_source.replace(".lyr", ".lyrx")
+                    arcpy.AddMessage(layer_source)
+                    if source and ".sqlite" in source:
+                        source_layer = arcpymapping.LayerFile(layer_source) if arcgis_pro else arcpy.mapping.Layer(source)
+
+                        if group:
+                            if arcgis_pro:
+                                update_layer = df.addLayerToGroup(group, source_layer, "BOTTOM")
+                            else:
+                                arcpymapping.AddLayerToGroup(df, group, source_layer, "BOTTOM")
+                        else:
+                            if arcgis_pro:
+                                update_layer = df.addLayer(source_layer, "TOP")
+                            else:
+                                arcpymapping.AddLayer(df, source_layer, "TOP")
+
+                        if not arcgis_pro: update_layer = df.listLayers(mxd, source_layer.name, df)[0] if arcgis_pro else \
+                            arcpy.mapping.ListLayers(mxd, source_layer.name, df)[0]
+
+                        if arcgis_pro:
+                            new_connection_properties = update_layer.connectionProperties
+                            new_connection_properties["workspace_factory"] = 'Sql'
+                            new_connection_properties["connection_info"]["database"] = os.path.dirname(source)
+                            update_layer.updateConnectionProperties()
+                        else:
+                            if ".sqlite" in source:
+                                layer = arcpymapping.Layer(layer_source)
+                                update_layer.visible = layer.visible
+                                update_layer.labelClasses = layer.labelClasses
+                                update_layer.showLabels = layer.showLabels
+                                update_layer.name = layer.name
+                                update_layer.definitionQuery = definition_query
+
+                                try:
+                                    arcpymapping.UpdateLayer(df, update_layer, layer, symbology_only=True)
+                                except Exception as e:
+                                    arcpy.AddWarning(source)
+                                    pass
+                            else:
+                                update_layer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))),
+                                                               workspace_type, os.path.basename(source))
+
+                        try:
+                            arcpymapping.UpdateLayer(df, update_layer, layer, symbology_only=True)
+                        except Exception as e:
+                            arcpy.AddWarning(source)
+                            pass
+                    else:
+                        layer = arcpymapping.LayerFile(layer_source) if arcgis_pro else arcpymapping.Layer(layer_source)
+                        if group:
+                            if arcgis_pro:
+                                df.addLayerToGroup(group, layer, "TOP")
+                            else:
+                                arcpymapping.AddLayerToGroup(df, group, layer, "TOP")
+                        else:
+                            if arcgis_pro:
+                                df.addLayer(layer, "TOP")
+                            else:
+                                arcpymapping.AddLayer(df, layer, "TOP")
+                        update_layer = df.listLayers(layer.listLayers()[0].name)[0] if arcgis_pro else \
+                            arcpymapping.ListLayers(mxd, layer.name, df)[0]
+                        if definition_query:
+                            update_layer.definitionQuery = definition_query
+                        if new_name:
+                            update_layer.name = new_name
+
+                        if source:
+                            if arcgis_pro:
+                                # CONFIRMED WORKING FOR SHAPEFILE -> FILEGDB
+                                arcpy.AddMessage(update_layer)
+                                cp = update_layer.connectionProperties
+                                if workspace_type == "FILEGDB_WORKSPACE":
+                                    workspace_type = "File Geodatabase"
+                                arcpy.AddMessage(workspace_type)
+                                cp["connection_info"]['database'] = os.path.dirname(
+                                    source.replace(r"\mu_Geometry", ""))  # output db path+name
+                                cp['dataset'] = os.path.basename(source)
+                                cp['workspace_factory'] = workspace_type
+                                update_layer.updateConnectionProperties(update_layer.connectionProperties, cp)
+                            else:
+                                update_layer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))),
+                                                               workspace_type, os.path.basename(source))
+                    return update_layer
+
+                if nodes_featureclass:
+                    if "_spill.shp" in nodes_featureclass:
+                        arcpy.AddMessage(nodes_featureclass)
+
+                        layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_spill.lyr",
+                                         nodes_featureclass.replace(".shp", ""), group=empty_group_layer,
+                                         workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE",
+                                         new_name=os.path.basename(nodes_featureclass).replace(".shp", ""))
+                        layer.showLabels = True
+                    else:
+                        # layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_nodes.lyr",
+                        #          nodes_featureclass.replace(".shp",""), group=None, workspace_type = "SHAPEFILE_WORKSPACE", new_name = os.path.basename(nodes_featureclass).replace(".shp",""))
+
+                        if "flood volume" in display_type.lower():
+                            layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_nodes_floodvol.lyr",
+                                             nodes_featureclass.replace(".shp", ""), group=empty_group_layer,
+                                             workspace_type="SHAPEFILE_WORKSPACE" if "shp" in nodes_featureclass else "FILEGDB_WORKSPACE",
+                                             new_name=os.path.basename(nodes_featureclass).replace(".shp", ""))
+                            layer.showLabels = True
+
+                        if "Flood Depth".lower() in display_type.lower():
+                            arcpy.AddMessage(nodes_featureclass)
+                            layer = addLayer(
+                                os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_nodes_depthdiff.lyr",
+                                nodes_featureclass.replace(".shp", ""), group=empty_group_layer,
+                                workspace_type="SHAPEFILE_WORKSPACE" if "shp" in nodes_featureclass else "FILEGDB_WORKSPACE",
+                                new_name=os.path.basename(nodes_featureclass).replace(".shp", ""))
+                            layer.showLabels = False
+
+                        if "Surcharge Balance".lower() in display_type.lower():
+                            arcpy.AddMessage(nodes_featureclass)
+                            layer = addLayer(
+                                os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_Surcharge_balance.lyr",
+                                nodes_featureclass.replace(".shp", ""), group=empty_group_layer,
+                                workspace_type="SHAPEFILE_WORKSPACE" if "shp" in nodes_featureclass else "FILEGDB_WORKSPACE")
+                            layer.showLabels = True
+
+                        if "headloss" in display_type.lower():
+                            layer = addLayer(
+                                os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_nodes.lyr",
+                                nodes_featureclass.replace(".shp", ""), group=empty_group_layer,
+                                workspace_type="SHAPEFILE_WORKSPACE" if "shp" in nodes_featureclass else "FILEGDB_WORKSPACE",
+                                new_name=os.path.basename(nodes_featureclass).replace(".shp", ""))
+                            layer.showLabels = False
+
+                if reaches_featureclass:
+                    if "depth difference" in display_type.lower():
+                        layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_links_depthdiff.lyr",
+                                         reaches_featureclass.replace(".shp",""), group=empty_group_layer, workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE", new_name = os.path.basename(reaches_featureclass).replace(".shp",""))
+                        layer.showLabels = False
+                    if "peak discharge" in display_type.lower():
+                        layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_links.lyr",
+                                         reaches_featureclass.replace(".shp",""), group=empty_group_layer,
+                                         workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE",
+                                         new_name = os.path.basename(reaches_featureclass).replace(".shp",""))
+                        layer.showLabels = False
+                    if "total discharge" in display_type.lower():
+                        layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_links_SumQ.lyr",
+                                         reaches_featureclass.replace(".shp", ""), group=empty_group_layer,
+                                         workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE",
+                                         new_name=os.path.basename(reaches_featureclass).replace(".shp", ""))
+                        layer.showLabels = True
+                if not arcgis_pro:
+                    arcpy.RefreshTOC()
+            # def addLayer(layer_source, source):
+            #     layer = arcpy.mapping.Layer(layer_source)
+            #     layer = arcpy.mapping.AddLayer(df, weirLayer, 'TOP')
+            #     layer = arcpy.mapping.ListLayers(mxd, weirLayer, df)[0]
+            #     layer.replaceDataSource(os.path.dirname(msm_weir[0]), "FILEGDB_WORKSPACE",
+            #                                 os.path.basename(msm_weir[0]).split(".")[0])
+            #
+            #     weirLayer.name = os.path.splitext(os.path.basename(htmlFile))[0] + u" Weir Discharge"
+            #
+            # weirLayer = arcpy.mapping.Layer(os.path.dirname(os.path.realpath(__file__)) + "\Data\msm_Weir.lyr")
+            # weirLayer = arcpy.mapping.AddLayer(df, weirLayer, 'TOP')
+            # weirLayer = arcpy.mapping.ListLayers(mxd, weirLayer, df)[0]
+            # weirLayer.replaceDataSource(os.path.dirname(msm_weir[0]), "FILEGDB_WORKSPACE",
+            #                             os.path.basename(msm_weir[0]).split(".")[0])
+            #
+            # weirLayer.name = os.path.splitext(os.path.basename(htmlFile))[0] + u" Weir Discharge"
+        return
+
+
+class PlotRes1D(object):
+    def __init__(self):
+        self.label = "2) Plot Res1D Results"
+        self.description = "2) Plot Res1D Results"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        # Define parameter definitions
+
+        manhole_layer = arcpy.Parameter(
+            displayName="Manhole feature layer",
+            name="manhole_layer",
+            datatype="GPFeatureLayer",
+            parameterType="Optional",
+            direction="Input")
+        manhole_layer.filter.list = ["Point"]
+
+        pipe_layer = arcpy.Parameter(
+            displayName="Pipe feature layer",
+            name="pipe_layer",
+            datatype="GPFeatureLayer",
+            parameterType="Optional",
+            direction="Input")
+
+        result_files = arcpy.Parameter(
+            displayName="RES1D Network Result Files or DFS0 Rain Series",
+            name="result_files",
+            datatype="File",
+            multiValue=True,
+            parameterType="optional",
+            direction="Input")
+        result_files.filter.list = ["res1d", "dfs0"]
+
+        stop_updating = arcpy.Parameter(
+            displayName="Stop Updating Parameters",
+            name="stop_updating",
+            datatype="Boolean",
+            parameterType="Derived",  # It's not an input!
+            direction="Output"
+        )
+        stop_updating.enabled = False  # Hides it from the UI
+        
+        date_filter = arcpy.Parameter(
+            displayName="Filter results to these dates (StartDate - EndDate)",
+            name="date_filter",
+            datatype="String",
+            parameterType="Optional",
+            direction="Input"
+        )
+        date_filter.category = "Filter results"
+
+        step_every = arcpy.Parameter(
+            displayName="Step every",
+            name="step_every",
+            datatype="GPLong",
+            parameterType="Optional",
+            direction="Input"
+        )
+        step_every.value = 1
+        step_every.category = "Filter results"
+
+        font_size = arcpy.Parameter(
+            displayName="Font Size",
+            name="font_size",
+            datatype="GPDouble",
+            parameterType="Required",
+            direction="Input"
+        )
+        font_size.value = 7.0  # Default value
+        font_size.category = "Additional Settings"
+
+        parameters = [manhole_layer, pipe_layer, result_files, stop_updating, date_filter, step_every, font_size]
+        return parameters
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        if not parameters[3].Value:
+            parameters[3].Value = True
+            if arcgis_pro:
+                # Reference the active map in the current project
+                aprx = arcpymapping.ArcGISProject("CURRENT")
+                map_view = aprx.activeMap
+
+                # List layers with selected features
+                layers = None
+                for layer in map_view.listLayers():
+                    try:
+                        if layer.getSelectionSet() and arcpy.Describe(layer).shapeType == "Point":
+                            layers = layer.longName
+                            break
+                    except:
+                        pass
+            else:
+                mxd = arcpy.mapping.MapDocument("CURRENT")
+                df = arcpy.mapping.ListDataFrames(mxd)[0]
+                layers = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
+                          lyr.getSelectionSet() if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Point'][0]
+
+            if layers and not parameters[0].ValueAsText and not parameters[0].altered:
+                parameters[0].value = layers
+
+            if arcgis_pro:
+                # Reference the active map in the current project
+                aprx = arcpymapping.ArcGISProject("CURRENT")
+                map_view = aprx.activeMap
+
+                # List layers with selected features
+                layers = None
+                for layer in map_view.listLayers():
+                    try:
+                        if layer.getSelectionSet() and arcpy.Describe(layer).shapeType == "Polyline":
+                            layers = layer.longName
+                            break
+                    except:
+                        pass
+            else:
+                mxd = arcpy.mapping.MapDocument("CURRENT")
+                df = arcpy.mapping.ListDataFrames(mxd)[0]
+                layers = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
+                          lyr.getSelectionSet() if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'][0]
+
+            if layers and not parameters[1].ValueAsText:
+                parameters[1].value = layers
+            for parameter in [parameters[0], parameters[1]]:
+                if parameter.ValueAsText:
+                    if not parameters[2].value and ".gdb" in parameter.value.dataSource:
+                        metadata_filepath = os.path.join(os.path.dirname(parameter.value.dataSource), "metadata")
+                        # parameters[1].Value = [metadata_filepath]
+                        if arcpy.Exists(metadata_filepath):
+                            res1d_filepath = [row[0] for row in arcpy.da.SearchCursor(metadata_filepath, ["res1d_path"])][0]
+                            if arcpy.Exists(res1d_filepath):
+                                parameters[2].Value = [res1d_filepath]
+
+        return
+
+    def updateMessages(self, parameters):  # optional
+
+        return
+
+    def execute(self, parameters, messages):
+        manhole_layer = parameters[0].ValueAsText
+        pipe_layer = parameters[1].ValueAsText
+        # dfs0_file = parameters[3].ValueAsText
+        date_filter = parameters[4].ValueAsText
+        step_every = parameters[5].Value
+        font_size = parameters[6].Value
+
+        if date_filter:
+            # import dateparser
+
+            def convertDate(date_str):
+                date_str = date_str.strip()
+                print(date_str)
+
+                # Special case: only year
+                if date_str.isdigit() and len(date_str) == 4:
+                    return datetime.datetime(int(date_str), 1, 1)
+
+                formats = [
+                    "%d-%m-%Y",
+                    "%d/%m/%Y",
+                    "%d.%m.%Y",
+                    "%d-%m-%y",
+                    "%d/%m/%y",
+                    "%d.%m.%y",
+                    "%d-%m",  # Assume current year
+                    "%d/%m",
+                    "%d.%m",
+                    "%Y-%m-%d",
+                ]
+
+                for fmt in formats:
+                    try:
+                        parsed = datetime.datetime.strptime(date_str, fmt)
+                        # If no year was provided (default is 1900), use current year
+                        if parsed.year == 1900:
+                            parsed = parsed.replace(year=datetime.now().year)
+                        return parsed
+                    except ValueError:
+                        continue
+
+                raise ValueError(f"Failed to interpret date: {date_str}")
+
+            time_filter = convertDate(date_filter.split(" - ")[0]), convertDate(date_filter.split(" - ")[1])
+
+            arcpy.AddMessage(
+                f"Filtering to Start: {time_filter[0].strftime('%Y-%m-%d %H:%M:%S')}, End: {time_filter[1].strftime('%Y-%m-%d %H:%M:%S')}")
+        else:
+            time_filter = None
+
+        result_files = [f.replace("'", "") for f in parameters[2].ValueAsText.split(";")] if parameters[2].ValueAsText else None
+
+        from mikeio1d.res1d import Res1D, QueryDataNode, QueryDataReach, QueryDataStructure
+
+        manholes_selected = []
+        pipes_selected = []
+        if manhole_layer:
+            manholes_selected = [row[0] for row in arcpy.da.SearchCursor(manhole_layer, ["MUID"])]
+
+        if pipe_layer:
+            pipes_selected = [row[0] for row in arcpy.da.SearchCursor(pipe_layer, ["MUID"])]
+
+        import matplotlib.pyplot as plt
+
+        # Parameters
+        subplots_count = 2 if manholes_selected and pipes_selected else 1
+        fig_width_cm = 15.7  # Total figure width in centimeters
+        fig_width_in = fig_width_cm / 2.54  # Convert to inches
+        aspect_ratio = subplots_count  # Adjust for desired height (e.g., 0.6 for landscape-like)
+
+        # Calculate figure height based on aspect ratio and number of rows (1 row here)
+        fig_height_in = fig_width_in * aspect_ratio
+
+        # Create subplots
+        fig, axs = plt.subplots(subplots_count, 1, figsize=(fig_width_in, fig_height_in), dpi=300, sharex = True)
+
+        # If only one subplot, make axs iterable
+        if subplots_count == 1:
+            axs = [axs]
+
+        manhole_queries = {muid: QueryDataNode("WaterLevel", muid,0) for muid in manholes_selected}
+        pipe_queries = {muid: QueryDataReach("Discharge", muid,0) for muid in pipes_selected}
+        queries = {**manhole_queries, **pipe_queries}
+
+        arcpy.SetProgressor("default", "Reading res1d")
+
+        cmap = plt.cm.get_cmap('tab10' if arcgis_pro else "Set1")
+        linestyles = ['-', '--', '-.', ':',
+                      (0, (1, 1)),
+                      (0, (5, 5)),
+                      (0, (3, 5, 1, 5)),
+                      (0, (3, 1, 1, 1))]
+
+        plt.rcParams.update({'font.size': float(font_size)})
+        plt.rcParams['font.family'] = 'Verdana'
+        plt.rcParams['svg.fonttype'] = 'none'
+
+        arcpy.AddMessage(font_size)
+        import matplotlib.dates as dates
+
+        for result_file_i, result_file in enumerate(result_files):
+            if ".res1d" in result_file:
+                res1d = Res1D(result_file, time = time_filter, step_every = step_every if step_every > 1 else None)
+                try:
+                    result_df = res1d.read([queries[key] for key in queries])
+                except Exception as e:
+                    import pandas as pd
+                    arcpy.AddWarning(e)
+                    dfs = []
+                    for query in queries:
+                        try:
+                            dfs.append(res1d.read(queries[query]))
+                        except:
+                            pass
+                    result_df = pd.concat(dfs, axis=1)
+
+                columns = result_df.columns
+                # arcpy.AddMessage(queries)
+                col_i_WL = 0
+                col_i_D = 0
+
+                discharge_row = 1 if manholes_selected else 0
+                axs[0].set_ylabel("Stuvningsniveau [m]")
+                if pipes_selected:
+                    axs[discharge_row].set_ylabel(u"Vandføring [L/s]")
+
+                arcpy.SetProgressor("step", "Processing queries...", 0, len(columns), 1)
+
+                linestyle = linestyles[result_file_i % len(linestyles)]
+
+                def insert_gaps(series, gap_threshold: float):
+                    """
+                    From a pandas Series with a DatetimeIndex, return x and y arrays where
+                    NaNs are inserted after large time gaps.
+
+                    Parameters:
+                        series (pd.Series): Time series with DatetimeIndex.
+                        gap_threshold_seconds (float): Max allowed gap in seconds.
+
+                    Returns:
+                        x (np.ndarray): Index values with NaNs inserted (as datetime64).
+                        y (np.ndarray): Series values with NaNs inserted.
+                    """
+                    idx = series.index
+                    values = series.values
+
+                    # Convert datetime to seconds since epoch for diffing
+                    idx_seconds = idx.view(np.int64) / 1e9
+                    diffs = np.diff(idx_seconds)
+                    gap_locs = np.where(diffs > gap_threshold)[0]
+
+                    x_out = []
+                    y_out = []
+
+                    for i in range(len(series)):
+                        x_out.append(idx[i])
+                        y_out.append(values[i])
+                        if i in gap_locs:
+                            x_out.append(np.datetime64('NaT'))
+                            y_out.append(np.nan)
+
+                    return np.array(x_out), np.array(y_out)
+
+                i = 0
+                for col in columns:
+                    arcpy.SetProgressorLabel(f"Plotting result {i}/{len(columns)}")
+                    arcpy.SetProgressorPosition(i)
+                    i += 1
+
+                    if len(result_files) > 1:
+                        label = "%s (%s)" % (col.split(":")[1], os.path.basename(result_file).replace("Base", "").replace(".res1d",""))
+                    else:
+                        label = "%s" % (col.split(":")[1])
+
+                    x, y = insert_gaps(result_df[col],
+                                       gap_threshold=30 * 60)  # for datetime index, 30 min gap
+                    arcpy.AddMessage(col)
+                    if "waterlevel" in col.split(":")[0].lower():
+                        axs[0].plot(x, y,  label = label, color = cmap(col_i_WL % 10), linestyle = linestyle, linewidth=0.8)
+                        col_i_WL += 1
+
+                    if "discharge" in col.split(":")[0].lower():
+                        axs[discharge_row].plot(x, y*1e3, label = label, color=cmap(col_i_D % 10), linestyle = linestyle, linewidth=0.8)
+                        col_i_D += 1
+                        arcpy.AddMessage(col_i_D)
+
+            elif ".dfs0" in result_file:
+                for ax in axs:
+                    import mikeio
+                    xlim = ax.get_xlim()
+                    dfs0 = mikeio.read(result_file).to_dataframe()
+                    ax2 = ax.twinx()
+                    ax2.step(dfs0.index, dfs0.values, 'k', linewidth = 0.5, label = u"Nedbør")
+                    ax2.set_ylabel(r"Regnintensitet [µm/s]")
+                    ax.set_xlim(xlim)
+
+        arcpy.SetProgressor("default", "Showing Plot")
+
+
+        for subplot_i in range(subplots_count):
+            if len(queries)<9:
+                axs[subplot_i].legend()
+            locator = dates.AutoDateLocator(interval_multiples=True)
+            axs[subplot_i].xaxis.set_major_locator(locator)
+
+
+
+            def y_formatter(x, pos):
+                # Format float with max 3 significant digits, no scientific notation
+                # Use format specifier '.3f' but strip trailing zeros smartly
+                s = f"{x:.3f}".rstrip('0').rstrip('.')
+                # For very small numbers close to zero, just show 0
+                if s == '-0':
+                    s = '0'
+                return s
+
+            axs[subplot_i].yaxis.set_major_formatter(FuncFormatter(y_formatter))
+            axs[subplot_i].yaxis.set_major_locator(MaxNLocator(nbins=6))  # max 6 ticks on y-axis
+
+            for label in axs[subplot_i].get_xticklabels():
+                label.set_rotation(45)
+                label.set_horizontalalignment('right')
+
+            axs[subplot_i].grid(which='major', linestyle='--', alpha=0.7)
+
+
+        # axs[1].legend()
+        plt.tight_layout()
+        fig.autofmt_xdate()
+        plt.show()
+        # time.sleep(10)
+
+
