@@ -41,25 +41,13 @@ These instructions will guide you through installing and using MIKE Urban Tools.
 ## Installing Python Requirements
 To use the tools effectively, install the required Python packages.
 
-### Standard Installation
-Run the following commands in your terminal or command prompt:
-```bash
-python -m pip install https://github.com/enielsen93/mikegraph/tarball/master
-```
-
 ### Installing for ArcGIS Pro users
 If you’re using ArcGIS Pro, first **clone your Python environment** (via ArcGIS Pro → Project → Python → Manage Environments). Then, **activate the cloned environment** and open a Command Prompt to run:
 
 ```cmd
 "C:\Progra~1\ArcGIS\Pro\bin\Python\scripts\propy.bat" -m pip install --user mikeio
+"C:\Progra~1\ArcGIS\Pro\bin\Python\scripts\propy.bat" -m pip install --user mikeio1d
 ```
-
-### Installing for ArcMap users
-If ArcMap Python is not your default Python interpreter, specify the path to its Python executable. For example:
-```bash
-"C:\Python27\ArcGIS10.7\python.exe" -m pip install https://github.com/enielsen93/mikegraph/tarball/master
-```
-
 ---
 
 ## Need Help?
