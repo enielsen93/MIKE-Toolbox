@@ -53,9 +53,9 @@ If you’re using ArcGIS Pro, first **clone your Python environment** (via ArcGI
 
 ```cmd
 "C:\Progra~1\ArcGIS\Pro\bin\Python\scripts\propy.bat" -m pip install --user mikeio
+'''
 
-
-### nstalling for ArcMap users
+### Installing for ArcMap users
 If ArcMap Python is not your default Python interpreter, specify the path to its Python executable. For example:
 ```bash
 "C:\Python27\ArcGIS10.7\python.exe" -m pip install https://github.com/enielsen93/networker/tarball/master
