@@ -55,8 +55,8 @@ Press `Win + R`, type `cmd`, and hit **Enter**.
 Copy and paste these commands (adjust the path if your ArcGIS Pro is installed elsewhere):
 
 ```cmd
-"C:\Program Files\ArcGIS\Pro\bin\Python\Scripts\propy.bat" -m pip install --user mikeio
-"C:\Program Files\ArcGIS\Pro\bin\Python\Scripts\propy.bat" -m pip install --user mikeio1d
+"C:\Progra~1\ArcGIS\Pro\bin\Python\scripts\propy.bat" -m pip install --user mikeio
+"C:\Progra~1\ArcGIS\Pro\bin\Python\scripts\propy.bat" -m pip install --user mikeio1d
 ```
 ---
 
