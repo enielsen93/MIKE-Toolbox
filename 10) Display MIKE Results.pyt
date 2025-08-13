@@ -9,7 +9,7 @@ import codecs
 import sys
 import mousereader
 import ColebrookWhite
-import networker
+from mikegraph import PipeNetwork
 import codecs
 
 from subprocess import call
@@ -1341,7 +1341,7 @@ class DisplayWeirStatistics(object):
 
         weirs = {}
         arcpy.SetProgressorLabel("Getting FROMNODE and TONODE for pipes")
-        link_network = networker.NetworkLinks(mike_urban_database, map_only = "weir")
+        link_network = PipeNetwork(mike_urban_database, map_only = "weir")
         with arcpy.da.SearchCursor(mike_urban_database + "\msm_Weir",["MUID"]) as cursor:
             try:
                 for row in cursor:
@@ -1516,7 +1516,7 @@ class DisplayFlowStatistics(object):
                 for row in cursor:
                     MUIDs[row[0]] = "'%s', '%s'" % (row[1],row[2])
         else:
-            link_network = networker.NetworkLinks(mike_urban_database, map_only = "link weir").links
+            link_network = PipeNetwork(mike_urban_database, map_only = "link weir").links
             for link in link_network.values():
                 MUIDs[link.MUID] = "'%s', '%s'" % (link.fromnode, link.tonode)
             
@@ -1879,7 +1879,7 @@ class DisplayWeirReturnPeriod(object):
 
 
         weirs = {}
-        link_network = networker.NetworkLinks(mike_urban_database, map_only = "weir")
+        link_network = PipeNetwork(mike_urban_database, map_only = "weir")
         for weir in link_network.weirs:
             weirs[weir] = Weir(weir, link_network.weirs[weir].fromnode, link_network.weirs[weir].tonode)
 

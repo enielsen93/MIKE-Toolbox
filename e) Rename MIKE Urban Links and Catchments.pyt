@@ -8,7 +8,7 @@ from arcpy import env
 from shutil import copyfile
 import string
 import traceback
-import networker
+from mikegraph import PipeNetwork
 import random
 
 class Toolbox(object):
@@ -106,7 +106,7 @@ class RenameMUFeatures(object):
                     row[0] = "%s%d" % (prefix, row[1])
                     cursor.updateRow(row)
                     
-            network = networker.NetworkLinks(outputDatabase, map_only = "link")
+            network = PipeNetwork(outputDatabase, map_only = "link")
             # arcpy.CalculateField_management(linksFile, "MUID", "!FROMNODE! + str(!OBJECTID!)", "PYTHON")
             
             def generateName(link, iterator = 1):

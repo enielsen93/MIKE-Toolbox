@@ -352,7 +352,7 @@ class DisplayMikeUrbanAsCAD(object):
             nodes_invert_level = {row[0]: row[1] for row in arcpy.da.SearchCursor(os.path.join(MU_database, "msm_Node"), ["MUID", "InvertLevel"])}
 
             arcpy.SetProgressorLabel("Networking MIKE Urban Database")
-            network = networker.NetworkLinks(MU_database)
+            network = PipeNetwork(MU_database)
 
             arcpy.SetProgressor("step", "Setting Z Coordinate of msm_Link", 0, int(arcpy.GetCount_management(msm_Link).getOutput(0)), 1)
             with arcpy.da.UpdateCursor(msm_Link_z, ["SHAPE@", "MUID", "UpLevel", "DwLevel", "length"]) as cursor:
@@ -713,7 +713,7 @@ class ExportToDUModelBuilder(object):
                         cursor.deleteRow()
         else:
             arcpy.SetProgressorLabel("Networking MIKE Urban Database")
-            network = networker.NetworkLinks(MU_database)
+            network = PipeNetwork(MU_database)
 
         arcpy.SetProgressorLabel("...")
         arcpy.management.AddField(msm_Node, "Label", "TEXT")
@@ -1037,7 +1037,7 @@ class ExportToDDS(object):
 
         mike_urban_database = os.path.dirname(arcpy.Describe(msm_Node).catalogPath).replace("\mu_Geometry", "")
         is_mike_plus = True if ".sqlite" in mike_urban_database else False
-        network = networker.NetworkLinks(mike_urban_database)
+        network = PipeNetwork(mike_urban_database)
         msm_HParA = os.path.join(mike_urban_database, "msm_HParA")
         ms_Catchment = os.path.join(mike_urban_database, "msm_Catchment") if is_mike_plus else os.path.join(mike_urban_database, "ms_Catchment")
         msm_HModA = os.path.join(mike_urban_database, "msm_HModA")

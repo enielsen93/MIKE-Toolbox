@@ -20,7 +20,7 @@ class GroupComboBoxClass1(object):
         self.msm_Link = [layer for layer in layers_in_group if "Ledning" in layer]
         self.ms_Catchment = [layer for layer in layers_in_group if "Delopland" in layer]
         
-        self.graph = mikegraph.Graph(self.msm_Node.workspacePath)
+        self.graph = mikegraph.MikeNetwork(self.msm_Node.workspacePath)
         pass
     def onEditChange(self, text):
         pass

@@ -20,7 +20,7 @@ i = 0
 while not os.path.exists(functionsPath[i]):
     i += 1
 sys.path.append(functionsPath[i])
-import networker
+from mikegraph import PipeNetwork
 import ColebrookWhite
 
 def getAvailableFilename(filepath):
@@ -242,7 +242,7 @@ class TraceNetwork(object):
                     basins.append(row[0])
         
         arcpy.SetProgressorLabel("Mapping Network: Getting FROMNODE and TONODE for pipes")
-        link_network = networker.NetworkLinks(MU_database)
+        link_network = PipeNetwork(MU_database)
         weights = {"msm_Link":1, "msm_Pump":1e4, "msm_Orifice":1e4, "msm_Weir":1e4}
         link_network_by_feature_file = {"msm_Link":link_network.links, "msm_Pump":link_network.pumps, "msm_Orifice":link_network.pumps, "msm_Weir":link_network.weirs}
         
@@ -549,7 +549,7 @@ class TraceNodeToOutlet(object):
                 if nodeTypeDict[row[0]] == "Bassin":
                     basins.append(row[0])
         
-        link_network = networker.NetworkLinks(MU_database)
+        link_network = PipeNetwork(MU_database)
         weights = {"msm_Link":1, "msm_Pump":1e4, "msm_Orifice":1e4, "msm_Weir":1e4}
         link_network_by_feature_file = {"msm_Link":link_network.links, "msm_Pump":link_network.pumps, "msm_Orifice":link_network.pumps, "msm_Weir":link_network.weirs}
         for networkLink in networkLinks:
@@ -796,7 +796,7 @@ class TimeAreaMethod(object):
                     basins.append(row[0])
         
         arcpy.SetProgressorLabel("Mapping Network: Getting FROMNODE and TONODE for pipes")
-        link_network = networker.NetworkLinks(MU_database)
+        link_network = PipeNetwork(MU_database)
         weights = {"msm_Link":1, "msm_Pump":1e4, "msm_Orifice":1e4, "msm_Weir":1e4}
         link_network_by_feature_file = {"msm_Link":link_network.links, "msm_Pump":link_network.pumps, "msm_Orifice":link_network.pumps, "msm_Weir":link_network.weirs}
         

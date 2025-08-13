@@ -13,8 +13,6 @@ import math
 import os
 import sys
 import networkx as nx
-import ColebrookWhite
-import networker
 import pandas as pd
 import traceback
 import datetime
@@ -25,7 +23,6 @@ if "mapping" in dir(arcpy):
     import pythonaddins
 
     mikeio1d_installed = False
-
 else:
     arcgis_pro = True
     import arcpy.mp as arcpymapping
@@ -33,9 +30,29 @@ else:
     import importlib.util
     mikeio1d_installed = importlib.util.find_spec("mikeio1d") is not None
 
-import mikegraph
+
+try:
+    # Try local package inside toolbox folder
+    local_pkg_path = os.path.join(os.path.dirname(__file__), "Data")
+    if os.path.isdir(local_pkg_path):
+        local_used = True
+        sys.path.insert(0, local_pkg_path)
+    else:
+        local_used = False
+    import mikegraph
+    from mikegraph import TimeAreaAnalyzer
+    from mikegraph import PipeNetwork
+except ImportError:
+    raise ImportError(
+        "The 'mikegraph' package is required but not installed.\n"
+        "Checked local folder: {0} -> {1}\n\n"
+        "You can install it by running:\n"
+        "   python -m pip install https://github.com/enielsen93/mikegraph/tarball/master\n\n"
+        "where python is the path to your ArcGIS python.exe".format(
+            local_pkg_path, "FOUND" if local_used else "NOT FOUND")
+    )
+
 import sqlite3
-import timearea
 from copy import deepcopy
 import configparser
 
@@ -410,7 +427,7 @@ class PipeDimensionToolTAPro(object):
         msm_Link = os.path.join(MU_database, "msm_Link")
 
         arcpy.SetProgressorLabel("Mapping Network")
-        graph = mikegraph.Graph(MU_database, useMaxInFlow = useMaxInflow)
+        graph = mikegraph.MikeNetwork(MU_database, useMaxInFlow = useMaxInflow)
         graph.map_network()
 
         if breakChainOnNodes:
@@ -425,7 +442,7 @@ class PipeDimensionToolTAPro(object):
         arcpy.AddMessage(graph.maxInflow)
 
         arcpy.SetProgressorLabel("Reading Rain Series")
-        rainseries = timearea.TimeArea(runoff_file)
+        rainseries = TimeAreaAnalyzer(runoff_file)
 
         rainseries.additional_discharge = graph.maxInflow
         rainseries.scaling_factor = scaling_factor
@@ -553,7 +570,7 @@ class PipeDimensionToolTAPro(object):
                                 while QFull is not None and QFull * 1e3 < peak_discharge[
                                     graph.network.links[row[3]].fromnode] and Di + 1 < len(D):
                                     Di += 1
-                                    QFull = ColebrookWhite.QFull(D[Di] / 1e3, slope, row[2])
+                                    QFull = mikegraph.calculate_full_flow(D[Di] / 1e3, slope, row[2])
                                     # arcpy.AddMessage((D[Di], QFull))
                                     # arcpy.AddMessage(QFull)
                             diameter = D[Di] / 1.0e3
@@ -620,7 +637,7 @@ class PipeDimensionToolTAPro(object):
                             while QFull is not None and QFull * 1e3 < peak_discharge[
                                 graph.network.links[row[3]].fromnode] and Di + 1 < len(D):
                                 Di += 1
-                                QFull = ColebrookWhite.QFull(D[Di] / 1e3, slope, row[2])
+                                QFull = mikegraph.calculate_full_flow(D[Di] / 1e3, slope, row[2])
                         diameter = D[Di] / 1.0e3
 
                         material = row[2]
@@ -678,7 +695,7 @@ class PipeDimensionToolTAPro(object):
                             while QFull is not None and QFull * 1e3 < peak_discharge[
                                 graph.network.links[row[2]].fromnode] and Di + 1 < len(D):
                                 Di += 1
-                                QFull = ColebrookWhite.QFull(D[Di] / 1e3, slope, row[1])
+                                QFull = mikegraph.calculate_full_flow(D[Di] / 1e3, slope, row[1])
 
                         diameter = D[Di]
                         if keep_largest_diameter and diameter / 1.0e3 <= row[3]:
@@ -879,7 +896,7 @@ class PipeDimensionToolResultFile(object):
                         else:
                             while QFull is not None and QFull * 1e3 < peak_discharge[row[3]] and Di + 1 < len(D):
                                 Di += 1
-                                QFull = ColebrookWhite.QFull(D[Di] / 1e3, slope, row[2])
+                                QFull = mikegraph.calculate_full_flow(D[Di] / 1e3, slope, row[2])
                         diameter = D[Di] / 1.0e3
 
                         material = row[2]
@@ -936,7 +953,7 @@ class PipeDimensionToolResultFile(object):
                         else:
                             while QFull is not None and QFull * 1e3 < peak_discharge[row[2]] and Di + 1 < len(D):
                                 Di += 1
-                                QFull = ColebrookWhite.QFull(D[Di] / 1e3, slope, row[1])
+                                QFull = mikegraph.calculate_full_flow(D[Di] / 1e3, slope, row[1])
 
                         diameter = D[Di]
                         if keep_largest_diameter and diameter / 1.0e3 <= row[3]:
@@ -1419,9 +1436,8 @@ class CopyDiameter(object):
         # arcpy.AddMessage(reference_where_clause)
 
         if match_by.lower() == "FROMNODE-TONODE".lower():
-            import networker
-            reference_network = networker.NetworkLinks(reference_MU_database, map_only="link")
-            target_network = networker.NetworkLinks(target_MU_database, map_only="link")
+            reference_network = PipeNetwork(reference_MU_database, map_only="link")
+            target_network = PipeNetwork(target_MU_database, map_only="link")
 
         if is_sqlite:
             # arcpy.AddMessage(MU_database)
@@ -1630,7 +1646,7 @@ class InterpolateInvertLevels(object):
                     duplicates.append(MUID)
             raise(Exception("Cancelling toolbox"))
 
-        msm_Link_Network = networker.NetworkLinks(MU_database, map_only="link", filter_sql_query = "MUID IN ('%s')" % ("', '".join(links_MUIDs)))
+        msm_Link_Network = PipeNetwork(MU_database, map_only="link", filter_sql_query = "MUID IN ('%s')" % ("', '".join(links_MUIDs)))
         
         tonodes = [msm_Link_Network.links[MUID].tonode for MUID in links_MUIDs]
         fromnodes = [msm_Link_Network.links[MUID].fromnode for MUID in links_MUIDs]
@@ -1811,7 +1827,7 @@ class GetMinimumSlope(object):
 
         links_MUIDs = [row[0] for row in arcpy.da.SearchCursor(pipe_layer, ["MUID"])]
         where_clause = "MUID IN ('%s')" % ("', '".join(links_MUIDs))
-        msm_Link_Network = networker.NetworkLinks(MU_database, map_only="link", filter_sql_query = where_clause)
+        msm_Link_Network = PipeNetwork(MU_database, map_only="link", filter_sql_query = where_clause)
 
         tonodes = [msm_Link_Network.links[MUID].tonode for MUID in links_MUIDs]
         fromnodes = [msm_Link_Network.links[MUID].fromnode for MUID in links_MUIDs]
@@ -2174,7 +2190,7 @@ class CalculateSlopeOfPipe(object):
                                       arcpy.da.SearchCursor(msm_Node, ["MUID", "InvertLevel"])}
 
                 arcpy.SetProgressorLabel("Networking Database")
-                network = networker.NetworkLinks(MU_database, map_only = "link", filter_sql_query = "MUID IN ('%s')" % ("', '".join(links_MUID)))
+                network = PipeNetwork(MU_database, map_only = "link", filter_sql_query = "MUID IN ('%s')" % ("', '".join(links_MUID)))
                 arcpy.SetProgressor("step", "Calculating slope of pipes", 0, len(links_MUID), 1)
 
                 with sqlite3.connect(MU_database) as connection:
@@ -2207,7 +2223,7 @@ class CalculateSlopeOfPipe(object):
                 nodes_invert_level = {row[0]: row[1] for row in arcpy.da.SearchCursor(msm_Node, ["MUID", "InvertLevel"])}
 
                 arcpy.SetProgressorLabel("Networking Database")
-                network = networker.NetworkLinks(MU_database, map_only = "link", filter_sql_query = "%s IN (%s)" % (OID_fieldname, ', '.join([str(OID) for OID in links_OID])))
+                network = PipeNetwork(MU_database, map_only = "link", filter_sql_query = "%s IN (%s)" % (OID_fieldname, ', '.join([str(OID) for OID in links_OID])))
 
                 edit = arcpy.da.Editor(MU_database)
                 edit.startEditing(False, True)
@@ -2318,7 +2334,7 @@ class ResetUpLevelDwlevel(object):
 
         nodes_invert_level = {row[0]: row[1] for row in arcpy.da.SearchCursor(msm_Node, ["MUID", "InvertLevel"])}
 
-        network = networker.NetworkLinks(MU_database, map_only="link", filter_sql_query = where_clause)
+        network = PipeNetwork(MU_database, map_only="link", filter_sql_query = where_clause)
 
         if is_sqlite:
             with sqlite3.connect(
@@ -2442,7 +2458,7 @@ class SetDischargeRegulation(object):
 
         passive_regulations = {row[0]:row[1] for row in arcpy.da.SearchCursor(msm_PasReg, ["LinkID", "FunctionID"], where_clause = "LinkID IN ('%s')" % ("', '".join(links_MUIDs)))}
         missing_links = [MUID for MUID in links_MUID if MUID not in passive_regulations]
-        msm_Link_Network = networker.NetworkLinks(MU_database, map_only="link", filter_sql_query = "MUID IN ('%s')" % ("', '".join(links_MUIDs)))
+        msm_Link_Network = PipeNetwork(MU_database, map_only="link", filter_sql_query = "MUID IN ('%s')" % ("', '".join(links_MUIDs)))
         arcpy.AddMessage("TabID IN ('%s')" % ("', '".join(passive_regulations.values())))
 
         with arcpy.da.UpdateCursor(ms_TabD, ["TabID", "Value2"], where_clause = "TabID IN ('%s')" % ("', '".join(passive_regulations.values()))) as cursor:
@@ -2562,7 +2578,7 @@ class AnalyzeCatchmentArea(object):
         sql_query_catchments = parameters[1].Value
 
         MU_database = os.path.dirname(arcpy.Describe(link_layer).catalogPath).replace("\mu_Geometry", "")
-        graph = mikegraph.Graph(MU_database, ignore_regulations = True)
+        graph = mikegraph.MikeNetwork(MU_database, ignore_regulations = True)
 
         graph.map_network()
         graph._read_catchments(where_clause=sql_query_catchments)
@@ -3505,7 +3521,7 @@ class DrawClash(object):
             filter_sql_query = "MUID IN ('%s')" % ("', '".join([row[0] for row in arcpy.da.SearchCursor(layer, ["MUID"])]))
             MU_database = os.path.dirname(arcpy.Describe(layer).catalogPath).replace("\mu_Geometry", "")
             MU_database = MU_database.replace("!delete!", "")
-            networks[layer] = networker.NetworkLinks(MU_database, filter_sql_query = filter_sql_query)
+            networks[layer] = PipeNetwork(MU_database, filter_sql_query = filter_sql_query)
             # Make sure the layer actually exists:
             if not arcpy.Exists(layer):
                 arcpy.AddWarning("Layer not found: {}".format(layer))

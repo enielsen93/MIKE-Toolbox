@@ -3,7 +3,7 @@ import arcpy
 import os
 import numpy as np
 import mousereader
-import ColebrookWhite
+from mikegraph import calculate_full_flow
 
 # res1d_file = r"C:\Users\ELNN\OneDrive - Ramboll\Documents\Aarhus Vand\Kongelund og Marselistunnel\MIKE\KOM_Plan_027\KOM_CDS_5_sc3Base.res1d"
 res1d_file = r"C:\Users\ELNN\OneDrive - Ramboll\Documents\MOL\MOL_055R_opdim_LangebroBase.res1d"

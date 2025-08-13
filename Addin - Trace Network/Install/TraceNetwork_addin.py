@@ -120,10 +120,10 @@ class GroupComboBoxClass1(object):
         pump_test = os.path.join(self.msm_Node.workspacePath, "msm_Pump")
         print("Graphing %s" % (self.msm_Node.workspacePath.replace("!delete!","")))
         if arcpy.Exists(pump_test):
-            self.graph = mikegraph.Graph(self.msm_Node.workspacePath.replace("!delete!",""), map_only = self.map_only, ignore_regulations=ignore_regulations)
+            self.graph = mikegraph.MikeNetwork(self.msm_Node.workspacePath.replace("!delete!",""), map_only = self.map_only, ignore_regulations=ignore_regulations)
         else:
             print("Assuming it's not an MIKE Urban database as %s does not exist" % (pump_test))
-            self.graph = mikegraph.Graph(nodes_and_links = [self.msm_Node.dataSource, self.msm_Link.dataSource])
+            self.graph = mikegraph.MikeNetwork(nodes_and_links = [self.msm_Node.dataSource, self.msm_Link.dataSource])
         self.graph.map_network()
 
         self.points_muid = []

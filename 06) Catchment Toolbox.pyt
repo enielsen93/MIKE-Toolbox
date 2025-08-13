@@ -2165,7 +2165,7 @@ class CatchmentSlopeAnalysis(object):
         arcpy.SetProgressor("default", "Graphing MIKE Database")
         # graphing MU_database
         import mikegraph
-        graph = mikegraph.Graph(MU_database)
+        graph = mikegraph.MikeNetwork(MU_database)
         graph.map_network()
 
         arcpy.SetProgressor("default", "Catchment Analysis")
