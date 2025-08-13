@@ -16,6 +16,7 @@ import networkx as nx
 import pandas as pd
 import traceback
 import datetime
+import struct
 if "mapping" in dir(arcpy):
     arcgis_pro = False
     import arcpy.mapping as arcpymapping
@@ -90,6 +91,7 @@ def getAvailableFilename(filepath, parent = None):
             # return filepath + "%d" % i
     else:
         return filepath
+
 
 class Config:
     def __init__(self, config_file):
@@ -2745,7 +2747,7 @@ class DrawLongitudinalProfiles(object):
             datatype="Boolean",
             parameterType="optional",
             direction="Input")
-        draw_map.value = True
+        draw_map.value = False
 
         zoom_level = arcpy.Parameter(
             displayName="Zoom Level",
@@ -2753,7 +2755,7 @@ class DrawLongitudinalProfiles(object):
             datatype="Double",
             parameterType="Required",
             direction="Input",
-            category="Additional Settings"
+            category="Map Settings"
         )
         zoom_level.value = 1.5
 
@@ -2766,14 +2768,28 @@ class DrawLongitudinalProfiles(object):
             direction="Input")
         draw_critical_level.value = True
 
-        parameters = [pipe_layer, result_files, pdf_output, overwrite_or_append, backup_tempfile, draw_map, zoom_level, draw_critical_level]
+        reference_scale = arcpy.Parameter(
+            displayName="Reference Scale of Map",
+            name="reference_scale",
+            datatype="Double",
+            parameterType="required",
+            category="Map Settings",
+            direction="Input")
+        reference_scale.value = 2000
+
+        parameters = [pipe_layer, result_files, draw_map, pdf_output, overwrite_or_append, backup_tempfile, zoom_level, draw_critical_level, reference_scale]
         return parameters
 
     def isLicensed(self):
         return True
 
     def updateParameters(self, parameters):
-        backup_tempfile = parameters[4]
+        draw_map = parameters[2]
+        pdf_output = parameters[3]
+        overwrite_or_append = parameters[4]
+        backup_tempfile = parameters[5]
+        zoom_level = parameters[6]
+        reference_scale = parameters[8]
         if arcgis_pro:
             # Reference the active map in the current project
             aprx = arcpymapping.ArcGISProject("CURRENT")
@@ -2793,6 +2809,17 @@ class DrawLongitudinalProfiles(object):
             layers = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
                       lyr.getSelectionSet() if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline']
 
+        if draw_map.value:
+            pdf_output.enabled = True
+            overwrite_or_append.enabled = True
+            zoom_level.enabled = True
+            reference_scale.enabled = True
+        else:
+            pdf_output.enabled = False
+            overwrite_or_append.enabled = False
+            zoom_level.enabled = False
+            reference_scale.enabled = False
+
         if layers and not parameters[0].ValueAsText:
             parameters[0].value = ";".join(layers)
 
@@ -2805,9 +2832,9 @@ class DrawLongitudinalProfiles(object):
                     if arcpy.Exists(res1d_filepath):
                         parameters[1].Value = [res1d_filepath]
 
-        pdf_output = parameters[2]
-        overwrite_or_append = parameters[3]
-        if pdf_output.ValueAsText and os.path.exists(pdf_output.ValueAsText):
+        # pdf_output = parameters[2]
+        # overwrite_or_append = parameters[3]
+        if pdf_output.ValueAsText and os.path.exists(pdf_output.ValueAsText) and draw_map.Value:
             overwrite_or_append.enabled = True
             if overwrite_or_append.enabled:
                 import tempfile
@@ -2818,10 +2845,10 @@ class DrawLongitudinalProfiles(object):
                 # Copy the existing file to this temp file
                 shutil.copy2(pdf_output.ValueAsText, temp_backup_path)
                 backup_tempfile.value = temp_backup_path
-
-
         else:
             overwrite_or_append.enabled = False
+            overwrite_or_append.Value = False
+            backup_tempfile.value = ""
 
         # if parameters[1].altered and parameters[1].Values and not parameters[2].altered:  # result_files
         #     input_files = parameters[1].values
@@ -2847,14 +2874,22 @@ class DrawLongitudinalProfiles(object):
 
     def execute(self, parameters, messages):
         pipe_layers = parameters[0].Values
-        draw_map = parameters[5].Value
+        result_files = [f.replace("'", "") for f in parameters[1].ValueAsText.split(";")] if parameters[
+            1].ValueAsText else None
+        draw_map = parameters[2].Value
+        output_pdf = parameters[3].ValueAsText
+        overwrite_or_append = parameters[4].Value
+
+        backup_tempfile = parameters[5].Value
         zoom_level = parameters[6].Value
         draw_critical_level = parameters[7].Value
+        reference_scale = parameters[8].Value
+
 
         if arcgis_pro:
             from mikeio1d import open as open_res1d
             from mikeio1d.res1d import Res1D, QueryDataNode, QueryDataReach, QueryDataStructure
-            from shapely import wkb
+            # from shapely import wkb
             aprx = arcpy.mp.ArcGISProject("CURRENT")
             map_obj = aprx.activeMap
             view = aprx.activeView
@@ -2863,10 +2898,6 @@ class DrawLongitudinalProfiles(object):
             mxd = arcpy.mapping.MapDocument("CURRENT")
             df = arcpy.mapping.ListDataFrames(mxd)[0]
 
-        result_files = [f.replace("'", "") for f in parameters[1].ValueAsText.split(";")] if parameters[1].ValueAsText else None
-        output_pdf = parameters[2].ValueAsText
-        overwrite_or_append = parameters[3].Value
-        backup_tempfile = parameters[4].Value
 
         selection_sets = {}
         pipe_layer_references = {}
@@ -2948,8 +2979,8 @@ class DrawLongitudinalProfiles(object):
                 self.uplevel = uplevel
                 self.dwlevel = dwlevel
                 self.geometry = geometry
-                if arcgis_pro:
-                    self.shapely_geom = wkb.loads(bytes(geometry.WKB))
+                if False: # Deprecated - draw map without ArcGIS Pro
+                    self.shapely_geom = parse_wkb(geometry.WKB)
 
         class Node:
             """Holds Node attributes and native geometry"""
@@ -2960,7 +2991,7 @@ class DrawLongitudinalProfiles(object):
                 self.geometry = geometry
 
                 self.critical_level = None
-                if arcgis_pro:
+                if False: # Deprecated - draw map without ArcGIS Pro
                     self.shapely_geom = wkb.loads(bytes(geometry.WKB))
 
         # -----------------------
@@ -3185,7 +3216,7 @@ class DrawLongitudinalProfiles(object):
 
         arcpy.AddMessage(tlog.log("Plotting"))
 
-        if arcgis_pro:
+        if False: # Deprecated - draw map without ArcGIS Pro
             import geopandas as gpd
             # Creating Geoseries
             import contextily as ctx
@@ -3350,7 +3381,7 @@ class DrawLongitudinalProfiles(object):
                         muids = []
                         for fromnodeid, tonodeid in zip(path, path[1:]):
                             muids.append([link.muid for link in links.values() if
-                                    link.fromnodeid == fromnodeid and link.tonodeid == tonodeid][0])
+                                          link.fromnodeid == fromnodeid and link.tonodeid == tonodeid][0])
 
                         where_clause = "MUID IN ('%s')" % ("' , '".join(muids))
 
@@ -3376,7 +3407,7 @@ class DrawLongitudinalProfiles(object):
 
                         current_scale = view.camera.scale
                         view.camera.scale = current_scale * zoom_level
-                        map_obj.referenceScale = 2000
+                        map_obj.referenceScale = reference_scale
 
                         temp_dir = tempfile.gettempdir()
                         temp_png = os.path.join(temp_dir, "arcgis_map_snapshot")

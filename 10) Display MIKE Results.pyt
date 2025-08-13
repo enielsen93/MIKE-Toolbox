@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 import os
 import arcpy
+import mikegraph
 import numpy as np
 import re
 from arcpy import env
 arcpy.env.addOutputsToMap = False
 import codecs
 import sys
-import mousereader
-import ColebrookWhite
 from mikegraph import PipeNetwork
+from mikegraph import calculate_full_flow
 import codecs
 
 from subprocess import call
@@ -935,6 +935,7 @@ class DisplayFloodReturnPeriodFun(object):
                     msm_LinkToNode[row[0]] = row[2]
 
         arcpy.SetProgressorLabel("Reading ERF-file")
+        import mousereader
         dataTables = mousereader.readERF(erfFile,"MaxLevel_Ranked",MUIDs)
         # arcpy.AddMessage(dataTables)
         arcpy.SetProgressorLabel("Getting return period of flooding")
@@ -1519,7 +1520,8 @@ class DisplayFlowStatistics(object):
             link_network = PipeNetwork(mike_urban_database, map_only = "link weir").links
             for link in link_network.values():
                 MUIDs[link.MUID] = "'%s', '%s'" % (link.fromnode, link.tonode)
-            
+
+        import mousereader
         dataTables = mousereader.readERF(erfFile, "MaxFlow_Ranked", MUIDs.values(), ignore = True)
 
         msmLinkNew = arcpy.CopyFeatures_management(geometryFile,exportShape)
@@ -1765,7 +1767,7 @@ class DisplayQFullQMax(object):
                 except Exception as e:
                     arcpy.AddMessage("Failed on row %s" % row)
                     raise(e)
-                row[5] = colebrookWhite.QFull(row[1],max(row[2]*1e-2,minimumSlope*1e-3),row[3])
+                row[5] = calculate_full_flow(row[1],max(row[2]*1e-2,minimumSlope*1e-3),row[3])
                 row[6] = max(0,row[4]/row[5])
                 cursor.updateRow(row)
             
@@ -1883,7 +1885,7 @@ class DisplayWeirReturnPeriod(object):
         for weir in link_network.weirs:
             weirs[weir] = Weir(weir, link_network.weirs[weir].fromnode, link_network.weirs[weir].tonode)
 
-
+        import mousereader
         results = mousereader.readERF(erf_file, "Total_Discharge_Ranked", [weir.name for weir in weirs.values()])
         arcpy.AddMessage((erf_file, "Total_Discharge_Ranked", [weir.name for weir in weirs.values()]))
 
