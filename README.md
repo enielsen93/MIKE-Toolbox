@@ -40,13 +40,26 @@ These instructions will guide you through installing and using MIKE Urban Tools.
 
 ## Installing Python Requirements
 To use the tools effectively, install the required Python packages.
+## Installing `mikeio` for ArcGIS Pro Users
 
-### Installing for ArcGIS Pro users
-If you’re using ArcGIS Pro, first **clone your Python environment** (via ArcGIS Pro → Project → Python → Manage Environments). Then, **activate the cloned environment** and open a Command Prompt to run:
+If you are using ArcGIS Pro, follow these steps to safely install `mikeio` and `mikeio1d`.
+
+### 1. Clone your Python environment
+Open **ArcGIS Pro → Project → Python → Manage Environments**, select your default environment, and click **Clone**.  
+> This ensures the default Python environment remains intact.
+
+### 2. Activate the cloned environment
+Select your cloned environment and click **Activate**.
+
+### 3. Open a Command Prompt
+Press `Win + R`, type `cmd`, and hit **Enter**.
+
+### 4. Install packages
+Copy and paste these commands (adjust the path if your ArcGIS Pro is installed elsewhere):
 
 ```cmd
-"C:\Progra~1\ArcGIS\Pro\bin\Python\scripts\propy.bat" -m pip install --user mikeio
-"C:\Progra~1\ArcGIS\Pro\bin\Python\scripts\propy.bat" -m pip install --user mikeio1d
+"C:\Program Files\ArcGIS\Pro\bin\Python\Scripts\propy.bat" -m pip install --user mikeio
+"C:\Program Files\ArcGIS\Pro\bin\Python\Scripts\propy.bat" -m pip install --user mikeio1d
 ```
 ---
 
