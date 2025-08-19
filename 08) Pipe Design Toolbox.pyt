@@ -2716,12 +2716,12 @@ class DrawLongitudinalProfiles(object):
         # )
 
         pdf_output = arcpy.Parameter(
-            displayName="PDF Output",
+            displayName="Output File (PDF, PNG, SVG, JPG)",
             name="pdf_output",
             datatype="File",
             parameterType="Optional",
             direction="Output")
-        # pdf_output.filter.list = ["pdf"]
+        pdf_output.filter.list = ["pdf", "png", "svg", "jpg"]
 
         default_name = "Longitudinal Profiles.pdf"
         default_path = os.path.join(arcpy.env.scratchFolder, default_name)
@@ -2809,14 +2809,11 @@ class DrawLongitudinalProfiles(object):
             layers = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
                       lyr.getSelectionSet() if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline']
 
+
         if draw_map.value:
-            pdf_output.enabled = True
-            overwrite_or_append.enabled = True
             zoom_level.enabled = True
             reference_scale.enabled = True
         else:
-            pdf_output.enabled = False
-            overwrite_or_append.enabled = False
             zoom_level.enabled = False
             reference_scale.enabled = False
 
@@ -2834,7 +2831,7 @@ class DrawLongitudinalProfiles(object):
 
         # pdf_output = parameters[2]
         # overwrite_or_append = parameters[3]
-        if pdf_output.ValueAsText and os.path.exists(pdf_output.ValueAsText) and draw_map.Value:
+        if pdf_output.ValueAsText and os.path.exists(pdf_output.ValueAsText):
             overwrite_or_append.enabled = True
             if overwrite_or_append.enabled:
                 import tempfile
@@ -2873,6 +2870,19 @@ class DrawLongitudinalProfiles(object):
         return
 
     def execute(self, parameters, messages):
+        import os
+        import sqlite3
+        import pandas as pd
+        import numpy as np
+        import networkx as nx
+        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_pdf import PdfPages
+        from matplotlib.patches import Rectangle
+        from matplotlib import transforms
+        from matplotlib.gridspec import GridSpec
+        import matplotlib.image as mpimg
+        import tempfile
+
         pipe_layers = parameters[0].Values
         result_files = [f.replace("'", "") for f in parameters[1].ValueAsText.split(";")] if parameters[
             1].ValueAsText else None
@@ -2884,7 +2894,6 @@ class DrawLongitudinalProfiles(object):
         zoom_level = parameters[6].Value
         draw_critical_level = parameters[7].Value
         reference_scale = parameters[8].Value
-
 
         if arcgis_pro:
             from mikeio1d import open as open_res1d
@@ -2898,7 +2907,6 @@ class DrawLongitudinalProfiles(object):
             mxd = arcpy.mapping.MapDocument("CURRENT")
             df = arcpy.mapping.ListDataFrames(mxd)[0]
 
-
         selection_sets = {}
         pipe_layer_references = {}
         for pipe_layer in pipe_layers:
@@ -2909,20 +2917,6 @@ class DrawLongitudinalProfiles(object):
                     break
 
             selection_sets[pipe_layer] = pipe_layer_references[pipe_layer].getSelectionSet()
-            arcpy.AddMessage(selection_sets[pipe_layer])
-
-
-        import os
-        import sqlite3
-        import pandas as pd
-        import numpy as np
-        import networkx as nx
-        import matplotlib.pyplot as plt
-        from matplotlib.backends.backend_pdf import PdfPages
-        from matplotlib.patches import Rectangle
-        from matplotlib import transforms
-        import matplotlib.image as mpimg
-        import tempfile
 
         links_selected = []
         for pipe_layer in pipe_layers:
@@ -2931,16 +2925,8 @@ class DrawLongitudinalProfiles(object):
         # -----------------------
         # User Inputs
         # -----------------------
-        # RES1D_FOLDER = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Jens Juuls Vej\MIKE_URBAN\JJV_032\JJV_032_m1d - Result Files\JJV_032_CDS_5_133_240BaseDefault_Network_HD.res1d"
         SQLITE_FILE = os.path.dirname(arcpy.Describe(pipe_layers[0]).catalogPath)
-        # SQLITE_FILE = r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Hasle Torv\MIKE_URBAN\HAT_063\HAT_063.sqlite"
         OUTPUT_PDF = output_pdf
-        # output_pdf_temporary = OUTPUT_PDF
-        # if overwrite_or_append:
-        #     tmp_pdf
-        #     with tempfile.NamedTemporaryFile(suffix='.pdf', delete=True) as tmp_pdf:
-        #         tmp_path = tmp_pdf.name
-        #     output_pdf_temporary =
 
         import time
 
@@ -3059,7 +3045,6 @@ class DrawLongitudinalProfiles(object):
             result_file = result_files[0]
             res1d = Res1D(result_file)
             for reach in res1d.reaches.values():
-                arcpy.AddMessage(reach)
                 name = reach.name.replace("Weir:","").replace("Orifice:","")
                 if name in links_selected:
                     link = Link(
@@ -3072,10 +3057,7 @@ class DrawLongitudinalProfiles(object):
                         dwlevel = reach.gridpoints[-1].bottom_level,
                         geometry = arcpy.Polyline(arcpy.Array([arcpy.Point(gridpoint.xcoord, gridpoint.ycoord) for gridpoint in reach.gridpoints]))
                     )
-                    if "Weir" in reach.name:
-                        arcpy.AddMessage(dir(reach))
                     links[reach.name] = link
-                    arcpy.AddMessage(link)
 
 
         # -----------------------
@@ -3083,7 +3065,6 @@ class DrawLongitudinalProfiles(object):
         # -----------------------
         # Extract unique node IDs from loaded links
         node_ids = {link.fromnodeid for link in links.values()} | {link.tonodeid for link in links.values()}
-        arcpy.AddMessage(node_ids)
 
         # Build WHERE clause for selected nodes
         node_placeholders = ",".join("'{}'".format(nid) for nid in node_ids)
@@ -3121,13 +3102,12 @@ class DrawLongitudinalProfiles(object):
                         muid=node.id,
                         invertlevel = node.bottom_level,
                         groundlevel = node.ground_level,
-                        geometry = arcpy.PointGeometry(arcpy.Point(node.geometry.x, node.geometry.y))
+                        geometry = arcpy.PointGeometry(arcpy.Point(node.xcoord, node.ycoord))
                     )
                     nodes[node.id] = manhole
 
         # set uplevel and dwlevle to invert level of manhole is isinf (res1d)
         for link in links.values():
-            arcpy.AddMessage((link, link.uplevel, link.dwlevel, link.muid))
             if link.uplevel and math.isinf(link.uplevel):
                 link.uplevel = nodes[link.fromnodeid].invertlevel
             if link.dwlevel and math.isinf(link.dwlevel):
@@ -3142,13 +3122,6 @@ class DrawLongitudinalProfiles(object):
         arcpy.AddMessage(tlog.log("Reading Result Files"))
         scenario_data = {}
         if result_files and arcgis_pro:
-            # for f in result_files:
-            #     name = os.path.basename(os.path.splitext(f)[0])
-            #     res = open_res1d(f, nodes = (list(de_nodes.index)))
-            #     gdf = res.network.nodes.to_geopandas(agg='max', include_derived=False)
-            #     gdf = gdf.rename(columns={'max_WaterLevel': 'water_level'}).set_index('name')
-            #     scenario_data[name] = gdf['water_level'].to_dict()
-
             class Pipe:
                 def __init__(self, muid, start_node, end_node):
                     self.muid = muid
@@ -3169,9 +3142,7 @@ class DrawLongitudinalProfiles(object):
                         if muid not in res1d_reaches:
                             try:
                                 new_link = [reach for reach in res1d_reaches.values() if links[muid].fromnodeid == reach.start_node and links[muid] .tonodeid == reach.end_node]
-                                arcpy.AddMessage(new_link)
                                 if new_link:
-                                    arcpy.AddMessage((links_fixed[link_i], new_link[0].name))
                                     links_fixed[link_i] = new_link[0].name
                             except Exception as e:
                                 pass
@@ -3192,11 +3163,6 @@ class DrawLongitudinalProfiles(object):
                         except Exception as e:
                             pass
 
-                # res = open_res1d(f, nodes = (list(de_nodes.index)))
-                # gdf = res.network.nodes.to_geopandas(agg='max', include_derived=False)
-                # gdf = gdf.rename(columns={'max_WaterLevel': 'water_level'}).set_index('name')
-                # scenario_data[name] = gdf['water_level'].to_dict()
-
         arcpy.AddMessage(tlog.log("Graphing"))
         # -----------------------
         # 3) Graph & Paths
@@ -3215,16 +3181,16 @@ class DrawLongitudinalProfiles(object):
                         paths.append(p)
 
         arcpy.AddMessage(tlog.log("Plotting"))
-
-        if False: # Deprecated - draw map without ArcGIS Pro
-            import geopandas as gpd
-            # Creating Geoseries
-            import contextily as ctx
-
-            origin_CRS = "EPSG:32632"
-            webmercator_crs = "EPSG:3857"
-
-            links_geoseries = gpd.GeoSeries([link.shapely_geom for link in links.values()], crs = origin_CRS).to_crs(webmercator_crs)
+        # 
+        # if False: # Deprecated - draw map without ArcGIS Pro
+        #     import geopandas as gpd
+        #     # Creating Geoseries
+        #     import contextily as ctx
+        # 
+        #     origin_CRS = "EPSG:32632"
+        #     webmercator_crs = "EPSG:3857"
+        # 
+        #     links_geoseries = gpd.GeoSeries([link.shapely_geom for link in links.values()], crs = origin_CRS).to_crs(webmercator_crs)
         # nodes_geoseries = gpd.GeoSeries([node.shapely_geom for node in nodes.values()], crs = origin_CRS).to_crs(webmercator_crs)
 
         # -----------------------
@@ -3232,229 +3198,272 @@ class DrawLongitudinalProfiles(object):
         # -----------------------
         plt.rcParams['pdf.fonttype'] = 42
 
+        pdf = None
+        if output_pdf and "pdf" in output_pdf.lower():
+            tmp_pdf = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
+            pdf = PdfPages(tmp_pdf)
+
         arcpy.AddMessage(tlog.log("Plotting"))
         arcpy.SetProgressor("step", "Plotting...", 0, len(paths), 1)
-        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_pdf:
-            with PdfPages(tmp_pdf) as pdf:
-                for path_i, path in enumerate(paths):
-                    arcpy.SetProgressorLabel("Plotting Path %s-%s (%d of %d)" % (path[0], path[-1], path_i + 1, len(paths)))
-                    arcpy.SetProgressorPosition(path_i)
-                    # Calculate Chainage
-                    chain = [0.0]
-                    for fromnodeid, tonodeid in zip(path, path[1:]):
-                        link = [link for link in links.values() if link.fromnodeid == fromnodeid and link.tonodeid == tonodeid][0]
+        # with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_pdf:
+        #     with PdfPages(tmp_pdf) as pdf:
+        for path_i, path in enumerate(paths):
+            arcpy.SetProgressorLabel("Plotting Path %s-%s (%d of %d)" % (path[0], path[-1], path_i + 1, len(paths)))
+            arcpy.SetProgressorPosition(path_i)
 
-                        chain.append(chain[-1] + link.length)
+            # Calculate Chainage
+            chainage = [0.0]
+            for fromnodeid, tonodeid in zip(path, path[1:]):
+                link = [link for link in links.values() if link.fromnodeid == fromnodeid and link.tonodeid == tonodeid][0]
 
-                    groundlevels = [nodes[muid].groundlevel for muid in path]
-                    invertlevels = [nodes[muid].invertlevel for muid in path]
-                    criticallevels = [nodes[muid].critical_level for muid in path]
+                chainage.append(chainage[-1] + link.length)
 
-                    # Set up Figures
-                    fw = max(8, 8 + 0.5 * (len(path) - 2))
-                    fig = plt.figure(figsize=(fw, 5), dpi = 300)
-                    ax = fig.add_axes([0.05, 0.15, 0.65, 0.80])  # left, bottom, width, height
+            groundlevels = [nodes[muid].groundlevel for muid in path]
+            invertlevels = [nodes[muid].invertlevel for muid in path]
+            criticallevels = [nodes[muid].critical_level for muid in path]
 
-                    # bar width
-                    diffs = np.diff(chain) if len(chain) > 1 else [1]
-                    w = min(diffs) * 0.4;
-                    half = w / 2
+            # Set up Figures
 
-                    # Draw pipes
-                    for fromnodeid, tonodeid in zip(path, path[1:]):
-                        i = path.index(fromnodeid)
-                        x0, x1 = chain[i], chain[i + 1]
-                        sx, ex = x0 + half, x1 - half
-                        link = [link for link in links.values() if link.fromnodeid == fromnodeid and link.tonodeid == tonodeid][0]
+            if draw_map:
+                figure_width = max(8, 8 + 0.5 * (chainage[-1]/20 - 2))
+                fig = plt.figure(figsize=(figure_width, 5), dpi = 300)
+                # Main plot
+                ax_plot = fig.add_axes([0.05, 0.09, 0.6, 0.84])  # [left, bottom, width, height] in figure fraction
+                ax_map = fig.add_axes([0.7, 0.1, 0.25, 0.6])  # adjust width/height freely
+                bbox = ax_map.get_position()  # returns Bbox in figure coordinates
+                arcpy.AddMessage(bbox)
 
-                        # get uplevel, fallback to upstream node invert
-                        bu = link.uplevel if link.uplevel else nodes[fromnodeid].invertlevel
+                fig_width_in, fig_height_in = fig.get_size_inches()
+                map_width_in = bbox.width * fig_width_in
+                map_height_in = bbox.height * fig_height_in
 
-                        # get dwlevel, fallback to downstream node invert
-                        bd = link.dwlevel if link.dwlevel else nodes[tonodeid].invertlevel
+                map_aspect = map_width_in / map_height_in  # width / height
 
-                        d = link.diameter*1000 if link.diameter else 0 # mm
+                map_width_px = int(math.sqrt(1e6 * map_aspect))
+                map_height_px = int(1e6 / map_width_px)
 
-                        if sx and ex and bu and bd:
-                            ax.plot([sx, ex], [bu, bd], 'k-', lw=1)
-                            ax.plot([sx, ex], [bu + d / 1000, bd + d / 1000], 'k-', lw=1)
+            else:
+                figure_width = max(8, 8 + 0.5 * (chainage[-1] / 20 - 2))
+                fig, ax_plot = plt.subplots(figsize=(figure_width, 5), dpi=300)
+                fig.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.09)
+                ax_map = None
 
-                        # diameter label at bottom of main axes
-                        mid = 0.5 * (sx + ex)
-                        trans = transforms.blended_transform_factory(ax.transData, ax.transAxes)
-                        ax.text(mid, 0, u'ø{}'.format(int(d)) if not np.isnan(d) else "",
-                                transform=trans,
-                                ha='center', va='bottom', fontsize=8)
+            manhole_width = 2
 
-                    # Draw Manholes
-                    ax.plot(chain, groundlevels, 'g-', lw=0.8, label=u'Terrænkote')
-                    # if draw_critical_level:
-                    #     ax.plot(chain, criticallevels, 'r-', lw=0.8, label=u'Kritisk Kote')
-                    skip_critical_level_label = False
-                    for x, g, inv, criticallevel in zip(chain, groundlevels, invertlevels, criticallevels):
-                        if g and inv:
-                            rect = Rectangle((x - half, inv), w, g - inv, fill=False, edgecolor='black', lw=1.0)
-                            ax.add_patch(rect)
-                            if draw_critical_level and criticallevel:
-                                ax.plot([x - half, x + half], [criticallevel, criticallevel], 'r-', lw=1.0, label = "Kritisk Kote" if not skip_critical_level_label else None)
-                                skip_critical_level_label = True
+            # Draw pipes
+            for fromnodeid, tonodeid in zip(path, path[1:]):
+                i = path.index(fromnodeid)
+                chainage_0, chainage_1 = chainage[i], chainage[i + 1]
+                chainage_0_adj, chainage_1_adj = chainage_0 + manhole_width/2, chainage_1 - manhole_width/2
+                link = [link for link in links.values() if link.fromnodeid == fromnodeid and link.tonodeid == tonodeid][0]
 
-                    cmap = plt.cm.get_cmap('tab10' if arcgis_pro else "Set1")
+                # get uplevel, fallback to upstream node invert
+                uplevel = link.uplevel if link.uplevel else nodes[fromnodeid].invertlevel
 
-                    # for idx, (nm, wl) in enumerate(scenario_data.items()):
-                    #     vals = [wl.get(n, np.nan) for n in path]
-                    #     ax.plot(chain, vals, '--', color=cmap(idx), label=nm)
+                # get dwlevel, fallback to downstream node invert
+                dwlevel = link.dwlevel if link.dwlevel else nodes[tonodeid].invertlevel
 
-                    # Draw results
-                    for idx, (nm, pipe_result) in enumerate(scenario_data.items()):
-                        # Create a new list where the first and last elements of `chain` remain unchanged,
-                        # but each middle element is replaced by two elements adjusted by ±half on their value.
-                        # For example, if chain elements are numbers, each middle element c is replaced by (c - half) and (c + half).
-                        # If elements are tuples, only the second value (c[1]) is adjusted, first value (c[0]) stays the same.
-                        modified_chainage = [chain[0]] + [val for c in chain[1:-1] for val in (c - half, c + half)] + [chain[-1]]
+                # diameter = link.diameter*1000 if link.diameter else 0 # mm
 
-                        link_water_level = []
-                        for fromnodeid, tonodeid in zip(path, path[1:]):
-                            water_level = next(
-                                ((pipe.water_level_start, pipe.water_level_end) for pipe in pipe_result
-                                 if pipe.start_node == fromnodeid and pipe.end_node == tonodeid),
-                                None
-                            )
-                            if water_level:
-                                link_water_level.extend(water_level)
-                            else:
-                                link_water_level.extend([np.nan, np.nan])
+                if chainage_0_adj and chainage_1_adj and dwlevel and uplevel and link.diameter:
+                    ax_plot.plot([chainage_0_adj, chainage_1_adj], [uplevel, dwlevel], 'k-', lw=1)
+                    ax_plot.plot([chainage_0_adj, chainage_1_adj], [uplevel+link.diameter, dwlevel+link.diameter], 'k-', lw=1)
+                
 
-                        ax.plot(modified_chainage, link_water_level, '--', lw = 0.8, color=cmap(idx), label=nm)
+                # diameter label at bottom of main axes
+                mid = 0.5 * (chainage_0_adj + chainage_1_adj)
+                transformer = transforms.blended_transform_factory(ax_plot.transData, ax_plot.transAxes)
+                if link.diameter and not np.isnan(link.diameter):
+                    ax_plot.text(mid, 0, u'ø{}'.format(int(link.diameter*1e3)),
+                        transform=transformer,
+                        ha='center', va='bottom', fontsize=8)
 
-                    # Write MUIDs
-                    y_max = ax.get_ylim()[1]
-                    for x, n in zip(chain, path):
-                        ax.text(x, y_max * 0.95, str(n), ha='center', va='bottom', rotation=90, fontsize=8)
+            # Draw Manholes
+            ax_plot.plot(chainage, groundlevels, 'g-', lw=0.8, label=u'Terrænkote')
+            skip_critical_level_label = False
+            for x, groundlevel, invertlevel, criticallevel in zip(chainage, groundlevels, invertlevels, criticallevels):
+                if groundlevel and invertlevel:
+                    rect = Rectangle((x - manhole_width/2, invertlevel), manhole_width, groundlevel - invertlevel, fill=False, edgecolor='black', lw=1.0)
+                    ax_plot.add_patch(rect)
+                    if draw_critical_level and criticallevel:
+                        ax_plot.plot([x - manhole_width/2, x + manhole_width/2], [criticallevel, criticallevel], 'r-', lw=1.0, label = "Kritisk Kote" if not skip_critical_level_label else None)
+                        skip_critical_level_label = True
 
-                    # ticks, labels, legend
-                    ticks = np.arange(0, np.ceil(chain[-1] / 50) * 50 + 1, 50)
-                    ax.set_xticks(ticks)
-                    ax.set_xticklabels([str(int(t)) for t in ticks], fontsize=8)
-                    ax.set_xlabel('Stationering (m)')
-                    ax.set_ylabel('Kote (m)')
-                    ax.set_title(u"Profil: {} → {}".format(path[0], path[-1]))
-                    ax.grid(True, linestyle='--', lw=0.5)
-                    legend = ax.legend(fontsize='small', loc='upper left', bbox_to_anchor=(1.02, 1.0))
+            cmap = plt.cm.get_cmap('tab10' if arcgis_pro else "Set1")
 
-                    if False:
-                        # Create square inset map: e.g., 0.22 x 0.22 in figure coords
-                        inset_size = 0.55
-                        map_ax = fig.add_axes([0.6, 0.15, inset_size, inset_size])  # x0, y0, width, height
-                        # Plot full network in light grey
-                        links_geoseries.plot(ax=map_ax, color='black', linewidth=0.5)
-                        # Highlight selected path
-                        segs = []
-                        for fromnodeid, tonodeid in zip(path, path[1:]):
-                            link = [link for link in links.values() if link.fromnodeid == fromnodeid and link.tonodeid == link.tonodeid][0]
-                            segs.append(link.shapely_geom)
-                        geo_segs_web = gpd.GeoSeries(segs, crs=origin_CRS).to_crs(webmercator_crs)
-                        geo_segs_web.plot(ax=map_ax, color='red', linewidth=1)
+            # Draw results
+            for idx, (result_name, pipe_result) in enumerate(scenario_data.items()):
+                # Create a new list where the first and last elements of `chain` remain unchanged,
+                # but each middle element is replaced by two elements adjusted by ±half on their value.
+                # For example, if chain elements are numbers, each middle element c is replaced by (c - half) and (c + half).
+                # If elements are tuples, only the second value (c[1]) is adjusted, first value (c[0]) stays the same.
+                modified_chainage = [chainage[0]] + [val for c in chainage[1:-1] for val in (c - manhole_width/2, c + manhole_width/2)] + [chainage[-1]]
 
-                        # Get bounds of the red path
-                        xmin, ymin, xmax, ymax = geo_segs_web.total_bounds
-                        xmid = (xmin + xmax) / 2
-                        ymid = (ymin + ymax) / 2
+                link_water_level = []
+                for fromnodeid, tonodeid in zip(path, path[1:]):
+                    water_level = next(
+                        ((pipe.water_level_start, pipe.water_level_end) for pipe in pipe_result
+                         if pipe.start_node == fromnodeid and pipe.end_node == tonodeid),
+                        None
+                    )
+                    if water_level:
+                        link_water_level.extend(water_level)
+                    else:
+                        link_water_level.extend([np.nan, np.nan])
 
-                        # Ensure square extent
-                        half_extent = max((xmax - xmin), (ymax - ymin)) / 2
-                        expansion_factor = 2
-                        half_extent *= expansion_factor
+                ax_plot.plot(modified_chainage, link_water_level, '--', lw = 0.8, color=cmap(idx), label=result_name)
 
-                        map_ax.set_xlim(xmid - half_extent, xmid + half_extent)
-                        map_ax.set_ylim(ymid - half_extent, ymid + half_extent)
+            # Write MUIDs
+            y_max = ax_plot.get_ylim()[1]
+            for x, n in zip(chainage, path):
+                ax_plot.text(x, y_max, str(n), ha='center', va='top', rotation=90, fontsize=8)
 
-                        # Add basemap
-                        ctx.add_basemap(map_ax, zoom=19, source=ctx.providers.OpenStreetMap.Mapnik, interpolation='bilinear')
 
-                        map_ax.set_axis_off()
-                        map_ax.set_axis_off()
-                    elif arcgis_pro and draw_map:
-                        # Create square inset map: e.g., 0.22 x 0.22 in figure coords
-                        inset_size = 0.55
-                        map_ax = fig.add_axes([0.6, 0.15, inset_size, inset_size])  # x0, y0, width, height
-                        muids = []
-                        for fromnodeid, tonodeid in zip(path, path[1:]):
-                            muids.append([link.muid for link in links.values() if
-                                          link.fromnodeid == fromnodeid and link.tonodeid == tonodeid][0])
+            # ticks, labels, legend
+            ticks = np.arange(0, np.ceil(chainage[-1] / 50) * 50 + 1, 50)
+            ax_plot.set_xticks(ticks)
+            ax_plot.set_xticklabels([str(int(t)) for t in ticks], fontsize=8)
+            ax_plot.set_xlabel('Stationering (m)')
+            ax_plot.set_ylabel('Kote (m)')
+            ax_plot.set_title(u"{} → {}".format(path[0], path[-1]))
+            ax_plot.grid(True, linestyle='--', lw=0.5)
 
-                        where_clause = "MUID IN ('%s')" % ("' , '".join(muids))
+            if draw_map:
+                legend = ax_plot.legend(fontsize='small', loc='upper left', bbox_to_anchor=(1.02, 1.0), borderaxespad=0)
+            else:
+                legend = ax_plot.legend(fontsize='small', loc='lower right', bbox_to_anchor=(1.00, 1.02), borderaxespad=0)
+            # if False:
+            #     # Create square inset map: e.g., 0.22 x 0.22 in figure coords
+            #     inset_size = 0.55
+            #     map_ax = fig.add_axes([0.6, 0.15, inset_size, inset_size])  # x0, y0, width, height
+            #     # Plot full network in light grey
+            #     links_geoseries.plot(ax=map_ax, color='black', linewidth=0.5)
+            #     # Highlight selected path
+            #     segs = []
+            #     for fromnodeid, tonodeid in zip(path, path[1:]):
+            #         link = [link for link in links.values() if link.fromnodeid == fromnodeid and link.tonodeid == link.tonodeid][0]
+            #         segs.append(link.shapely_geom)
+            #     geo_segs_web = gpd.GeoSeries(segs, crs=origin_CRS).to_crs(webmercator_crs)
+            #     geo_segs_web.plot(ax=map_ax, color='red', linewidth=1)
+            #
+            #     # Get bounds of the red path
+            #     xmin, ymin, xmax, ymax = geo_segs_web.total_bounds
+            #     xmid = (xmin + xmax) / 2
+            #     ymid = (ymin + ymax) / 2
+            #
+            #     # Ensure square extent
+            #     half_extent = max((xmax - xmin), (ymax - ymin)) / 2
+            #     expansion_factor = 2
+            #     half_extent *= expansion_factor
+            #
+            #     map_ax.set_xlim(xmid - half_extent, xmid + half_extent)
+            #     map_ax.set_ylim(ymid - half_extent, ymid + half_extent)
+            #
+            #     # Add basemap
+            #     ctx.add_basemap(map_ax, zoom=19, source=ctx.providers.OpenStreetMap.Mapnik, interpolation='bilinear')
+            #
+            #     map_ax.set_axis_off()
+            #     map_ax.set_axis_off()
+            if draw_map:
+                muids = []
+                for fromnodeid, tonodeid in zip(path, path[1:]):
+                    muids.append([link.muid for link in links.values() if
+                                  link.fromnodeid == fromnodeid and link.tonodeid == tonodeid][0])
 
-                        def getExtents(extents):
+                where_clause = "MUID IN ('%s')" % ("' , '".join(muids))
 
-                            XMin = min([ext.XMin for ext in extents])
-                            XMax = max([ext.XMax for ext in extents])
-                            YMin = min([ext.YMin for ext in extents])
-                            YMax = max([ext.YMax for ext in extents])
+                def getExtents(extents):
+                    XMin = min([ext.XMin for ext in extents])
+                    XMax = max([ext.XMax for ext in extents])
+                    YMin = min([ext.YMin for ext in extents])
+                    YMax = max([ext.YMax for ext in extents])
 
-                            return arcpy.Extent(XMin, YMin, XMax, YMax)
+                    return arcpy.Extent(XMin, YMin, XMax, YMax)
 
-                        for layer in map_obj.listLayers():
-                            try:
-                                layer.setSelectionSet()
-                            except:
-                                pass
+                for layer in map_obj.listLayers():
+                    try:
+                        layer.setSelectionSet()
+                    except:
+                        pass
 
-                        for pipe_layer in pipe_layers:
-                            arcpy.management.SelectLayerByAttribute(pipe_layer_references[pipe_layer], "NEW_SELECTION", where_clause)
+                for pipe_layer in pipe_layers:
+                    arcpy.management.SelectLayerByAttribute(pipe_layer_references[pipe_layer], "NEW_SELECTION", where_clause)
 
-                        view.zoomToAllLayers(True)
+                view.zoomToAllLayers(True)
 
-                        current_scale = view.camera.scale
-                        view.camera.scale = current_scale * zoom_level
-                        map_obj.referenceScale = reference_scale
+                current_scale = view.camera.scale
+                view.camera.scale = current_scale * zoom_level
+                map_obj.referenceScale = reference_scale
 
-                        temp_dir = tempfile.gettempdir()
-                        temp_png = os.path.join(temp_dir, "arcgis_map_snapshot")
+                temp_dir = tempfile.gettempdir()
+                temp_png = os.path.join(temp_dir, "arcgis_map_snapshot")
 
-                        # Export active map to PNG
+                # Export active map to PNG
 
-                        view.exportToPNG(temp_png, height = 1000, width = 1000)
-                        from PIL import Image
+                view.exportToPNG(temp_png, height = map_height_px, width = map_width_px)
+                arcpy.AddMessage((map_height_px, map_width_px))
+                from PIL import Image
 
-                        # Convert PNG to JPG
-                        with Image.open(temp_png + ".png") as img:
-                            rgb_img = img.convert('RGB')  # Remove alpha channel if present
-                            temp_jpg = temp_png + ".jpg"
-                            rgb_img.save(temp_jpg, 'JPEG', quality=65, optimize=True)
+                # Convert PNG to JPG
+                with Image.open(temp_png + ".png") as img:
+                    rgb_img = img.convert('RGB')  # Remove alpha channel if present
+                    temp_jpg = temp_png + ".jpg"
+                    rgb_img.save(temp_jpg, 'JPEG', quality=65, optimize=True)
 
-                        # arcpy.AddMessage(temp_jpg)
-                        img = mpimg.imread(temp_jpg)
-                        map_ax.imshow(img)
-                        map_ax.axis('off')
+                img = mpimg.imread(temp_jpg)
+                # ax_map.set_axis_off()
+                # ax_map.imshow(img)
+                ax_map.set_axis_off()
+                # ax_map.set_xlim(0, 10)
+                # ax_map.set_ylim(0, 5)
 
-                    # save & close
+                # img = np.arange(12).reshape(3, 4)
+                ax_map.imshow(img)
+
+            # save & close
+            # pdf.savefig(fig)
+            # plt.tight_layout()
+            # fig.subplots_adjust(wspace=0.3)  # horizontal space between plots
+            if output_pdf:
+                if ".png" in output_pdf.lower():
+                    plt.savefig(output_pdf.replace(".png", "_%s-%s.png" % (path[0], path[-1])), format = "png", transparent = True)
+                elif ".svg" in output_pdf.lower():
+                    plt.savefig(output_pdf.replace(".svg", "_%s-%s.svg" % (path[0], path[-1])), format="svg", transparent=True)
+                elif ".jpg" in output_pdf.lower():
+                    plt.savefig(output_pdf.replace(".jpg", "_%s-%s.jpg" % (path[0], path[-1])), format="jpg")
+                elif ".pdf" in output_pdf.lower():
                     pdf.savefig(fig)
-                    plt.savefig("C:\Papirkurv\%s-%s.svg" % (path[0], path[-1]), format = "svg", transparent = True)
-                    # if path_i>2:
-                    #     break
-                    # plt.close(fig)
+                plt.close(fig)
 
-                # if overwrite or append is true (meaning it should append), it merges the temporary pdf with the output pdf
+        if not output_pdf:
+            plt.show()
+        elif pdf:
+            pdf.close()
             if overwrite_or_append:
                 from pypdf import PdfMerger
                 merger = PdfMerger()
                 merger.append(backup_tempfile)
                 merger.append(tmp_pdf)
                 merger.write(OUTPUT_PDF)
+                tmp_pdf.close()
             else:
+                tmp_pdf.close()
                 import shutil
                 shutil.copy(tmp_pdf.name, OUTPUT_PDF)
 
-        print("Saved profiles to: {}".format(OUTPUT_PDF))
 
+            # if path_i>2:
+            #     break
+            # plt.close(fig)
+
+            # if overwrite or append is true (meaning it should append), it merges the temporary pdf with the output pdf
+
+        #
+        # print("Saved profiles to: {}".format(OUTPUT_PDF))
+        #
         os.startfile(os.path.dirname(OUTPUT_PDF))  # Opens folder in Explorer
-
+        #
         for pipe_layer in pipe_layers:
-            arcpy.AddMessage(pipe_layer)
-            arcpy.AddMessage(pipe_layer_references)
-            arcpy.AddMessage(selection_sets)
-            arcpy.AddMessage(list(selection_sets[pipe_layer]))
             pipe_layer_references[pipe_layer].setSelectionSet(list(selection_sets[pipe_layer]))
         map_obj.referenceScale = old_scale
 
@@ -3499,7 +3508,6 @@ class DrawClash(object):
         return
 
     def execute(self, parameters, messages):
-        import networker
         from matplotlib.patches import Rectangle
         import matplotlib.pyplot as plt
 
