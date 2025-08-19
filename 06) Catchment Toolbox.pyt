@@ -2482,7 +2482,7 @@ class CatchmentConnectionDescription(object):
             import sqlite3
             with sqlite3.connect(MU_database.replace("!delete!","")) as connection:
                 update_cursor = connection.cursor()
-                for muid, description in catchments_HParAID.iteritems():
+                for muid, description in catchments_HParAID.items():
                     sql_execute = "UPDATE msm_CatchCon SET Description = '%s' WHERE CatchID = '%s'" % (
                             description, muid)
                     update_cursor.execute(
