@@ -2103,8 +2103,9 @@ class DisplaySqlitePro(object):
             with arcpy.da.SearchCursor(msm_BBoundary, ["MUID", "NodeID"],
                                        where_clause="ApplyBoundaryNo = 1 AND TypeNo = 12") as cursor:
                 for row in cursor:
-                    outlets[row[1]] = Outlet(row[1])
-                    outlets[row[1]].boundary_MUID = row[0]
+                    if row[1]:
+                        outlets[row[1]] = Outlet(row[1])
+                        outlets[row[1]].boundary_MUID = row[0]
 
             if not is_sqlite_database:
                 with arcpy.da.SearchCursor(msm_BItem,
@@ -2114,6 +2115,7 @@ class DisplaySqlitePro(object):
                     for row in cursor:
                         nodeIDs = [outlet.nodeID for outlet in outlets.values() if outlet.boundary_MUID == row[1]]
                         if nodeIDs:
+                            arcpy.AddMessage(NodeIDs)
                             outlets[nodeIDs[0]].boundary_item_MUID = row[0]
                             if row[3] == 1:
                                 outlets[nodeIDs[0]].boundary_water_level = row[2]
@@ -2124,8 +2126,8 @@ class DisplaySqlitePro(object):
                 with arcpy.da.SearchCursor(msm_BBoundary, ["NodeID", "ConstantValue"],
                                            where_clause="ApplyBoundaryNo = 1 AND TypeNo = 12 AND ConnectionTypeNo = 3") as cursor:
                     for row in cursor:
-                        outlets[row[0]].boundary_water_level = row[1]
-
+                        if row[0]:
+                            outlets[row[0]].boundary_water_level = row[1]
             with arcpy.da.SearchCursor(msm_Node, ["SHAPE@", "MUID", "NetTypeNo"],
                                        where_clause="TypeNo = 3 AND MUID IN ('%s')" % (
                                                "', '".join(outlets.keys()))) as cursor:
