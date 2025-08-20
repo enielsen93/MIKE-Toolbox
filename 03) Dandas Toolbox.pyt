@@ -250,7 +250,7 @@ class Dandas2MULinks(object):
             datatype="GPDouble",
             parameterType="Optional",
             direction="Input")
-        ignore_elevation_difference.value = 0.15
+        ignore_elevation_difference.value = 0
 		
         params = [dandas_knuder, dandas_ledninger, afloebkodeparameter, afloebkategori, coordinate_system, only_import_extent, import_catchments, ignore_elevation_difference]
         return params
