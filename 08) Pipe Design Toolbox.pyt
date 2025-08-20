@@ -2775,7 +2775,7 @@ class DrawLongitudinalProfiles(object):
             parameterType="required",
             category="Map Settings",
             direction="Input")
-        reference_scale.value = 2000
+        reference_scale.value = 1500
 
         parameters = [pipe_layer, result_files, draw_map, pdf_output, overwrite_or_append, backup_tempfile, zoom_level, draw_critical_level, reference_scale]
         return parameters
@@ -2962,8 +2962,8 @@ class DrawLongitudinalProfiles(object):
                 self.tonodeid = tonodeid
                 self.length = length
                 self.diameter = diameter
-                self.uplevel = uplevel
-                self.dwlevel = dwlevel
+                self.uplevel = uplevel if uplevel != -99 else None
+                self.dwlevel = dwlevel if dwlevel != -99 else None
                 self.geometry = geometry
                 if False: # Deprecated - draw map without ArcGIS Pro
                     self.shapely_geom = parse_wkb(geometry.WKB)
@@ -3225,27 +3225,51 @@ class DrawLongitudinalProfiles(object):
             # Set up Figures
 
             if draw_map:
-                figure_width = max(8, 8 + 0.5 * (chainage[-1]/20 - 2))
-                fig = plt.figure(figsize=(figure_width, 5), dpi = 300)
+                figure_width = max(8, 8 + 0.5 * (chainage[-1]/20 - 2) + 5)
+
+                map_width = 5
+
+                # 1 row, 2 columns → constrained_layout manages spacing
+                fig = plt.figure(figsize=(figure_width, 5), constrained_layout=True
+                                 )
+                gs = fig.add_gridspec(1, 2, width_ratios=[figure_width-5, map_width])
+
+                ax_plot = fig.add_subplot(gs[0, 0])
+                ax_map = fig.add_subplot(gs[0, 1])
+                # plt.show()
+
+                # fig, ax_plot = plt.subplots(figsize=(figure_width, 5), dpi = 300, constrained_layout=True)
+                # fig_width_in, fig_height_in = fig.get_size_inches()
+                #
+                # # desired map width in inches
+                # map_width_in = 5
+                # map_width_frac = map_width_in / fig_width_in  # fraction of figure width
+                #
+                # # left edge for map axes (stick to right side of figure)
+                # map_left = 1 - map_width_frac
+                #
+                # # add fixed-width map axes
+                # ax_map = fig.add_axes([map_left, 0.1, map_width_frac, 0.8])  # [left, bottom, width, height]
+
                 # Main plot
-                ax_plot = fig.add_axes([0.05, 0.09, 0.6, 0.84])  # [left, bottom, width, height] in figure fraction
-                ax_map = fig.add_axes([0.7, 0.1, 0.25, 0.6])  # adjust width/height freely
-                bbox = ax_map.get_position()  # returns Bbox in figure coordinates
-                arcpy.AddMessage(bbox)
-
-                fig_width_in, fig_height_in = fig.get_size_inches()
-                map_width_in = bbox.width * fig_width_in
-                map_height_in = bbox.height * fig_height_in
-
-                map_aspect = map_width_in / map_height_in  # width / height
-
-                map_width_px = int(math.sqrt(1e6 * map_aspect))
-                map_height_px = int(1e6 / map_width_px)
+                # ax_plot = fig.add_axes([0.05, 0.09, 0.6, 0.84])  # [left, bottom, width, height] in figure fraction
+                # ax_map = fig.add_axes([0.7, 0.1, 0.25, 0.6])  # adjust width/height freely
+                # bbox = ax_map.get_position()  # returns Bbox in figure coordinates
+                # arcpy.AddMessage(bbox)
+                #
+                # fig_width_in, fig_height_in = fig.get_size_inches()
+                # map_width_in = bbox.width * fig_width_in
+                # map_height_in = bbox.height * fig_height_in
+                #
+                # map_aspect = map_width_in / map_height_in  # width / height
+                #
+                # map_width_px = int(math.sqrt(1e6 * map_aspect))
+                # map_height_px = int(1e6 / map_width_px)
 
             else:
                 figure_width = max(8, 8 + 0.5 * (chainage[-1] / 20 - 2))
-                fig, ax_plot = plt.subplots(figsize=(figure_width, 5), dpi=300)
-                fig.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.09)
+                fig, ax_plot = plt.subplots(figsize=(figure_width, 5), dpi=300, constrained_layout=True)
+                fig.subplots_adjust(left=0.02, right=0.98, top=0.95, bottom=0.09)
                 ax_map = None
 
             manhole_width = 2
@@ -3268,7 +3292,7 @@ class DrawLongitudinalProfiles(object):
                 if chainage_0_adj and chainage_1_adj and dwlevel and uplevel and link.diameter:
                     ax_plot.plot([chainage_0_adj, chainage_1_adj], [uplevel, dwlevel], 'k-', lw=1)
                     ax_plot.plot([chainage_0_adj, chainage_1_adj], [uplevel+link.diameter, dwlevel+link.diameter], 'k-', lw=1)
-                
+
 
                 # diameter label at bottom of main axes
                 mid = 0.5 * (chainage_0_adj + chainage_1_adj)
@@ -3279,7 +3303,7 @@ class DrawLongitudinalProfiles(object):
                         ha='center', va='bottom', fontsize=8)
 
             # Draw Manholes
-            ax_plot.plot(chainage, groundlevels, 'g-', lw=0.8, label=u'Terrænkote')
+            ax_plot.plot(chainage, groundlevels, 'g-', lw=0.8)
             skip_critical_level_label = False
             for x, groundlevel, invertlevel, criticallevel in zip(chainage, groundlevels, invertlevels, criticallevels):
                 if groundlevel and invertlevel:
@@ -3327,11 +3351,12 @@ class DrawLongitudinalProfiles(object):
             ax_plot.set_ylabel('Kote (m)')
             ax_plot.set_title(u"{} → {}".format(path[0], path[-1]))
             ax_plot.grid(True, linestyle='--', lw=0.5)
+            ax_plot.set_xlim(left=-15, right = np.ceil(chainage[-1] / 50) * 50 + 1)   # only changes the left bound
 
             if draw_map:
-                legend = ax_plot.legend(fontsize='small', loc='upper left', bbox_to_anchor=(1.02, 1.0), borderaxespad=0)
+                legend = ax_plot.legend(fontsize='small', loc='lower left', bbox_to_anchor=(0, 0), borderaxespad=0)
             else:
-                legend = ax_plot.legend(fontsize='small', loc='lower right', bbox_to_anchor=(1.00, 1.02), borderaxespad=0)
+                legend = ax_plot.legend(fontsize='small', loc='lower left', bbox_to_anchor=(0, 0), borderaxespad=0)
             # if False:
             #     # Create square inset map: e.g., 0.22 x 0.22 in figure coords
             #     inset_size = 0.55
@@ -3400,8 +3425,7 @@ class DrawLongitudinalProfiles(object):
 
                 # Export active map to PNG
 
-                view.exportToPNG(temp_png, height = map_height_px, width = map_width_px)
-                arcpy.AddMessage((map_height_px, map_width_px))
+                view.exportToPNG(temp_png, height = 1500, width = 1500)
                 from PIL import Image
 
                 # Convert PNG to JPG
@@ -3411,14 +3435,20 @@ class DrawLongitudinalProfiles(object):
                     rgb_img.save(temp_jpg, 'JPEG', quality=65, optimize=True)
 
                 img = mpimg.imread(temp_jpg)
-                # ax_map.set_axis_off()
                 # ax_map.imshow(img)
+                # plt.show()
                 ax_map.set_axis_off()
                 # ax_map.set_xlim(0, 10)
                 # ax_map.set_ylim(0, 5)
 
                 # img = np.arange(12).reshape(3, 4)
-                ax_map.imshow(img)
+                # plt.show()
+                # plt.show()
+                # arcpy.AddMessage(ax_map.get_xlim())
+                ax_map.imshow(img)#, extent=[0, 1, 0, 0.66], aspect = 'auto')
+                # ax_map.set_xlim(0, 1)
+                # ax_map.set_ylim(0, 1)
+                # ax_map.set_axis_on()
 
             # save & close
             # pdf.savefig(fig)
