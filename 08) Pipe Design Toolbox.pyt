@@ -2913,10 +2913,10 @@ class DrawLongitudinalProfiles(object):
             # pipe_layer_references[pipe_layer] = pipe_layer
             for lyr in (map_obj.listLayers() if arcgis_pro else arcpy.mapping.ListLayers(mxd)):
                 if lyr.name == pipe_layer.name and lyr.getSelectionSet():
-                    pipe_layer_references[pipe_layer] = lyr
+                    pipe_layer_references[pipe_layer.longName] = lyr
                     break
 
-            selection_sets[pipe_layer] = pipe_layer_references[pipe_layer].getSelectionSet()
+            selection_sets[pipe_layer.longName] = pipe_layer_references[pipe_layer.longName].getSelectionSet()
 
         links_selected = []
         for pipe_layer in pipe_layers:
@@ -3412,7 +3412,7 @@ class DrawLongitudinalProfiles(object):
                         pass
 
                 for pipe_layer in pipe_layers:
-                    arcpy.management.SelectLayerByAttribute(pipe_layer_references[pipe_layer], "NEW_SELECTION", where_clause)
+                    arcpy.management.SelectLayerByAttribute(pipe_layer_references[pipe_layer.longName], "NEW_SELECTION", where_clause)
 
                 view.zoomToAllLayers(True)
 
@@ -3494,7 +3494,7 @@ class DrawLongitudinalProfiles(object):
         os.startfile(os.path.dirname(OUTPUT_PDF))  # Opens folder in Explorer
         #
         for pipe_layer in pipe_layers:
-            pipe_layer_references[pipe_layer].setSelectionSet(list(selection_sets[pipe_layer]))
+            pipe_layer_references[pipe_layer.longName].setSelectionSet(list(selection_sets[pipe_layer.longName]))
         map_obj.referenceScale = old_scale
 
 
