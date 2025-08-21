@@ -3494,7 +3494,8 @@ class DrawLongitudinalProfiles(object):
         #
         # print("Saved profiles to: {}".format(OUTPUT_PDF))
         #
-        os.startfile(os.path.dirname(OUTPUT_PDF))  # Opens folder in Explorer
+        if OUTPUT_PDF:
+            os.startfile(os.path.dirname(OUTPUT_PDF))  # Opens folder in Explorer
         #
         for pipe_layer in pipe_layers:
             pipe_layer_references[pipe_layer.longName].setSelectionSet(list(selection_sets[pipe_layer.longName]))
