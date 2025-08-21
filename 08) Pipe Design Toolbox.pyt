@@ -240,15 +240,15 @@ class PipeDimensionToolTAPro(object):
         writeDFS0.category = "Result Settings"
 
         runoff_file = arcpy.Parameter(
-            displayName="Rain Event in ASCII or DFS0" if mikeio1d_installed else "Rain Event in ASCII",
+            displayName="Rain Event in ASCII or DFS0",
             name="runoff",
             datatype="file",
             parameterType="Required",
             direction="Input")
-        if mikeio1d_installed:
-            runoff_file.filter.list = ["txt","km2","kmd","csv", "dfs0"]
-        else:
-            runoff_file.filter.list = ["txt", "km2", "kmd", "csv"]
+        # if mikeio1d_installed:
+        runoff_file.filter.list = ["txt","km2","kmd","csv", "dfs0"]
+        # else:
+        #     runoff_file.filter.list = ["txt", "km2", "kmd", "csv"]
 
         keep_largest_diameter = arcpy.Parameter(
             displayName="Only change diameter if it's greater than existing",
@@ -343,19 +343,22 @@ class PipeDimensionToolTAPro(object):
                     except Exception as e:
                         pass
 
-            if arcgis_pro and mikeio1d_installed:
-                table_path = MU_database + r"\msm_BBoundary"
-                fields = ["muid", "applyboundaryno", "fraction", "variationno", "tsconnection"]
+            if arcgis_pro:
+                try:
+                    table_path = MU_database + r"\msm_BBoundary"
+                    fields = ["muid", "applyboundaryno", "fraction", "variationno", "tsconnection"]
 
-                with arcpy.da.SearchCursor(table_path, fields) as cursor:
-                    for row in cursor:
-                        id, applyboundaryno, fraction, variationno, tsconnection = row
-                        # Do your thing with the variables
-                        if applyboundaryno and variationno == 3:
-                            scaling_factor.value = fraction
+                    with arcpy.da.SearchCursor(table_path, fields) as cursor:
+                        for row in cursor:
+                            id, applyboundaryno, fraction, variationno, tsconnection = row
+                            # Do your thing with the variables
+                            if applyboundaryno and variationno == 3:
+                                scaling_factor.value = fraction
 
-                            runoff_file.Value = os.path.abspath(os.path.join(os.path.dirname(MU_database), tsconnection))
-                            break
+                                runoff_file.Value = os.path.abspath(os.path.join(os.path.dirname(MU_database), tsconnection))
+                                break
+                except Exception as e:
+                    pass
 
 
 
