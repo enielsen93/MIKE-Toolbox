@@ -1,7 +1,7 @@
 """
 Timearea module for mikegraph
 """
-import mikegraph
+# import mikegraph
 from io import StringIO
 import pandas as pd
 import numpy as np
@@ -103,7 +103,7 @@ if __name__ == "__main__":
     # graph = mikegraph.MikeNetwork(r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Soenderhoej\MIKE\MIKE_URBAN\_ORIGINAL\Viby_detailed_200101_40\Viby_detailed_200101_40.sqlite")
     # graph.map_network()
 
-    rainseries = TimeAreaAnalyzer(r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Jens Juuls Vej\MIKE_URBAN\02_RAIN\CDS_T5_5 min.DFS0")
+    rainseries = TimeAreaAnalyzer(r"C:\Papirkurv\Webinar presentation\02_RAIN\CDS_5 min_samlet.DFS0")
     # rainseries.additional_discharge = {"SEMI25":0.25}
     #
     # discharge_ta = rainseries.timeareaCurve(u'D43440R', graph)
