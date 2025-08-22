@@ -2914,8 +2914,8 @@ class DrawLongitudinalProfiles(object):
         import pandas as pd
         import numpy as np
         import networkx as nx
-		import matplotlib
-		matplotlib.use("TkAgg")
+        import matplotlib
+        matplotlib.use("TkAgg")
         import matplotlib.pyplot as plt
         from matplotlib.backends.backend_pdf import PdfPages
         from matplotlib.patches import Rectangle

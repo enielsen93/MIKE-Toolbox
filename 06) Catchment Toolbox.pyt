@@ -268,7 +268,7 @@ class CatchmentProcessing(object):
             arcpy.SetProgressor ("default", "Processing intersect analysis")
             arcpy.Intersect_analysis ([[imparea,2],[ms_catchments,1]], catchintsec)
             
-            arcpy.CopyFeatures_management(catchintsec, "C:\Papirkurv\CatchIntSec.shp")
+            #arcpy.CopyFeatures_management(catchintsec, "C:\Papirkurv\CatchIntSec.shp")
             
             hashes = []
             try:
@@ -664,12 +664,12 @@ class CatchmentProcessingScalgo(object):
                 for row in cursor:
                     catchments[row[0]].old_imperviousness = row[1]
 
-        in_memory_fc = r"C:\Papirkurv\Bob.shp"
+        in_memory_fc = r"in_memory\Bob.shp"
         arcpy.CopyFeatures_management(ms_Catchment, in_memory_fc)
         arcpy.RepairGeometry_management(in_memory_fc)
         # arcpy.AddMessage(str(/))
 
-        # ms_Catchment_copy = arcpy.management.MinimumBoundingGeometry(ms_Catchment, r"C:\Papirkurv\ms_Catchment2", geometry_type = "RECTANGLE_BY_AREA", group_option = "ALL")[0]
+        # ms_Catchment_copy = arcpy.management.MinimumBoundingGeometry(ms_Catchment, r"in_memory\ms_Catchment2", geometry_type = "RECTANGLE_BY_AREA", group_option = "ALL")[0]
         # ms_Catchment_copy = arcpy.management.CopyFeatures(ms_Catchment, r"in_memory\ms_Catchment")[0]
         arcpy.SetProgressor("default", "Answer user promt (may be behind window)")
         arcpy.AddMessage("Answer user promt (may be behind window)")
@@ -2132,7 +2132,7 @@ class CatchmentSlopeAnalysis(object):
         clipped_raster_resampled = "in_memory\DTM_c"
         raster_points = "in_memory\DTM_clipped_resampled_points"
         raster_points_mapped = "in_memory\DTM_clipped_resampled_points_mapped"
-        # raster_points = "C:\Papirkurv\DTM_clipped_resampled_points.shp"
+        # raster_points = "in_memory\DTM_clipped_resampled_points.shp"
         # catchment_loop = "in_memory\Catchment_loop"
 
         arcpy.management.CopyFeatures(msm_Catchment, catchments_output)

@@ -7,11 +7,32 @@
 import arcpy
 import os
 import traceback
-import networker
 import xml.etree.ElementTree as ET
 import xml.dom.minidom
 import numpy as np
 import warnings
+
+try:
+    # Try local package inside toolbox folder
+    local_pkg_path = os.path.join(os.path.dirname(__file__), "Data")
+    if os.path.isdir(local_pkg_path):
+        local_used = True
+        sys.path.insert(0, local_pkg_path)
+    else:
+        local_used = False
+    import mikegraph
+    from mikegraph import TimeAreaAnalyzer
+    from mikegraph import PipeNetwork
+except ImportError:
+    raise ImportError(
+        "The 'mikegraph' package is required but not installed.\n"
+        "Checked local folder: {0} -> {1}\n\n"
+        "You can install it by running:\n"
+        "   python -m pip install https://github.com/enielsen93/mikegraph/tarball/master\n\n"
+        "where python is the path to your ArcGIS python.exe".format(
+            local_pkg_path, "FOUND" if local_used else "NOT FOUND")
+    )
+
 
 if "mapping" in dir(arcpy):
     arcgis_pro = False
@@ -352,7 +373,7 @@ class DisplayMikeUrbanAsCAD(object):
             nodes_invert_level = {row[0]: row[1] for row in arcpy.da.SearchCursor(os.path.join(MU_database, "msm_Node"), ["MUID", "InvertLevel"])}
 
             arcpy.SetProgressorLabel("Networking MIKE Urban Database")
-            network = PipeNetwork(MU_database)
+            network = mikegraph.PipeNetwork(MU_database)
 
             arcpy.SetProgressor("step", "Setting Z Coordinate of msm_Link", 0, int(arcpy.GetCount_management(msm_Link).getOutput(0)), 1)
             with arcpy.da.UpdateCursor(msm_Link_z, ["SHAPE@", "MUID", "UpLevel", "DwLevel", "length"]) as cursor:
@@ -692,7 +713,7 @@ class ExportToDUModelBuilder(object):
                         cursor.deleteRow()
 
             arcpy.SetProgressorLabel("Networking MIKE Urban Database")
-            network = networker.NetworkLinks(MU_database, filter_sql_query = "MUID IN ('%s')" % ("', '".join(links)))
+            network = mikegraph.PipeNetwork(MU_database, filter_sql_query = "MUID IN ('%s')" % ("', '".join(links)))
             arcpy.SetProgressorLabel("Clipping Features")
 
             nodes_in_links = set()
@@ -968,10 +989,19 @@ class ExportToDDS(object):
             datatype="GPString",
             parameterType="Optional",
             direction="Input")
-
         use_thickness.filter.list = ["Top", "Bottom", "Side"]
 
-        parameters = [msm_Node, msm_Link, dandas_knuder, dandas_ledninger, dandas_deloplande, use_pipe_catalogue, use_thickness]
+        write_labels = arcpy.Parameter(
+            displayName="Write X/Y Positions automatically?",
+            name="write_labels",
+            datatype="GPBoolean",
+            parameterType="Optional",
+            category="Additonal Settings",
+            direction="Input"
+        )
+        write_labels.value = True
+
+        parameters = [msm_Node, msm_Link, dandas_knuder, dandas_ledninger, dandas_deloplande, use_pipe_catalogue, use_thickness, write_labels]
 
         return parameters
 
@@ -1021,6 +1051,7 @@ class ExportToDDS(object):
         dandas_deloplande = parameters[4].ValueAsText
         use_pipe_catalogue = parameters[5].Value
         use_thickness = parameters[6].Value
+        write_labels = parameters[7].Value
 
         pipe_catalogue = []
         class PipeSize:
@@ -1037,7 +1068,7 @@ class ExportToDDS(object):
 
         mike_urban_database = os.path.dirname(arcpy.Describe(msm_Node).catalogPath).replace("\mu_Geometry", "")
         is_mike_plus = True if ".sqlite" in mike_urban_database else False
-        network = PipeNetwork(mike_urban_database)
+        network = mikegraph.PipeNetwork(mike_urban_database)
         msm_HParA = os.path.join(mike_urban_database, "msm_HParA")
         ms_Catchment = os.path.join(mike_urban_database, "msm_Catchment") if is_mike_plus else os.path.join(mike_urban_database, "ms_Catchment")
         msm_HModA = os.path.join(mike_urban_database, "msm_HModA")
@@ -1243,8 +1274,9 @@ class ExportToDDS(object):
             ET.SubElement(node_dds, "YKoordinat").text = "%1.2f" % node.y
 
             label_offset = [5, 5] if node.net_type_no == 2 else [-10, 5]
-            ET.SubElement(node_dds, "XLabel").text = "%1.2f" % (node.x + label_offset[0])
-            ET.SubElement(node_dds, "YLabel").text = "%1.2f" % (node.y + label_offset[1])
+            if write_labels:
+                ET.SubElement(node_dds, "XLabel").text = "%1.2f" % (node.x + label_offset[0])
+                ET.SubElement(node_dds, "YLabel").text = "%1.2f" % (node.y + label_offset[1])
 
             if catchments_dict and dandas_deloplande:
                 catchment_items = ET.SubElement(node_dds, "DeloplandItems")
@@ -1260,9 +1292,10 @@ class ExportToDDS(object):
                         ET.SubElement(catchment_item, "Tekstvinkel").text = "0"
                         if not catchment.persons == None:
                             ET.SubElement(catchment_item, "PE").text = "%1.1f" % catchment.persons
-                        ET.SubElement(catchment_item, "XLabel").text = "%1.3f" % catchment.shape.centroid.X
-                        ET.SubElement(catchment_item, "YLabel").text = "%1.3f" % catchment.shape.centroid.Y
-                        ET.SubElement(catchment_item, "TekstFaktor").text = "1.00"
+                        if write_labels:
+                            ET.SubElement(catchment_item, "XLabel").text = "%1.3f" % catchment.shape.centroid.X
+                            ET.SubElement(catchment_item, "YLabel").text = "%1.3f" % catchment.shape.centroid.Y
+                            ET.SubElement(catchment_item, "TekstFaktor").text = "1.00"
 
                         catchment_item_coord_items = ET.SubElement(catchment_item, "DeloplandKoordItems")
                         for coordi, coord in enumerate(catchment.shape.getPart()[0]):
@@ -1319,13 +1352,14 @@ class ExportToDDS(object):
                             ET.SubElement(bend, 'XKoordinat').text = "%1.2f" % (part.X)
                             ET.SubElement(bend, 'YKoordinat').text = "%1.2f" % (part.Y)
 
-                    link_dds_part_labels = ET.SubElement(link_dds_part, 'LabelDelledningItems')
-                    link_dds_part_label = ET.SubElement(link_dds_part_labels, 'LabelDelledning')
-                    centroid = link.shape.positionAlongLine(link.shape.length / 2)
-                    ET.SubElement(link_dds_part_label, 'PunktPaaLednKode').text = "0"
-                    ET.SubElement(link_dds_part_label, 'TekstjusteringKode').text = "4"
-                    ET.SubElement(link_dds_part_label, 'XLabel').text = "%1.2f" % centroid.firstPoint.X
-                    ET.SubElement(link_dds_part_label, 'YLabel').text = "%1.2f" % centroid.firstPoint.Y
+                    if write_labels:
+                        link_dds_part_labels = ET.SubElement(link_dds_part, 'LabelDelledningItems')
+                        link_dds_part_label = ET.SubElement(link_dds_part_labels, 'LabelDelledning')
+                        centroid = link.shape.positionAlongLine(link.shape.length / 2)
+                        ET.SubElement(link_dds_part_label, 'PunktPaaLednKode').text = "0"
+                        ET.SubElement(link_dds_part_label, 'TekstjusteringKode').text = "4"
+                        ET.SubElement(link_dds_part_label, 'XLabel').text = "%1.2f" % centroid.firstPoint.X
+                        ET.SubElement(link_dds_part_label, 'YLabel').text = "%1.2f" % centroid.firstPoint.Y
 
         # Skriv XML-fil
 

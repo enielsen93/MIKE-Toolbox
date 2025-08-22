@@ -8,6 +8,7 @@ arcpy.env.addOutputsToMap = False
 import codecs
 import sys
 import codecs
+from scipy.optimize import bisect
 
 from subprocess import call
 from shutil import copyfile
@@ -178,7 +179,7 @@ def readRes1D(res1d_file, MU_model = None, gdb_path = None, filter_to_extent = N
 
         @property
         def energy_line_gradient(self):
-            return ((self.max_start_water_level - self.max_end_water_level) - (self.min_start_water_level-self.min_end_water_level)) / self.shape.length
+            return ((self.max_start_water_level - self.max_end_water_level) - (self.min_start_water_level-self.min_end_water_level)) / self.length
 
         @property
         def friction_loss(self):
@@ -220,7 +221,6 @@ def readRes1D(res1d_file, MU_model = None, gdb_path = None, filter_to_extent = N
 
                 # Return the difference between calculated and actual slope (should equal zero)
                 return I-self.slope
-
             v = bisect(colebrookWhite, 1e-5, 500, xtol=2e-5, maxiter=50, disp=True)
             # Return the discharge
             if v:
@@ -288,7 +288,6 @@ def readRes1D(res1d_file, MU_model = None, gdb_path = None, filter_to_extent = N
                         catchment.nodeid_exists = True
                     else:
                         catchment.nodeid_exists = False
-
     elif MU_model and ".sqlite" in MU_model:
         with arcpy.da.SearchCursor(os.path.join(MU_model, "msm_Node"), ["MUID", "Diameter", "NetTypeNo", "GroundLevel", "CriticalLevel", "InvertLevel", "CoverTypeNo"]) as cursor:
             for row in cursor:
@@ -333,8 +332,8 @@ def readRes1D(res1d_file, MU_model = None, gdb_path = None, filter_to_extent = N
                 else:
                     catchment.nodeid_exists = False
 
-    # res1d_file = r"C:\Users\ELNN\OneDrive - Ramboll\Documents\Aarhus Vand\Kongelund og Marselistunnel\MIKE\KOM_Plan_017_sc2\KOM_Plan_017_sc2_CDS_5Base.res1d"
     arcpy.AddMessage("Reading %s" % res1d_file)
+    res1d = Res1D(res1d_file)  # , time = time_filter if date_filter else None)
     # queries = []
 
     extension = extension if 'extension' in locals() else ""
@@ -374,30 +373,51 @@ def readRes1D(res1d_file, MU_model = None, gdb_path = None, filter_to_extent = N
             raise ValueError(f"Failed to interpret date: {date_str}")
 
         time_filter = convertDate(date_filter.split(" - ")[0]), convertDate(date_filter.split(" - ")[1])
-    res1d = Res1D(res1d_file)#, time = time_filter if date_filter else None)
+
 
     arcpy.AddMessage("Reading Geometry from res1d")
     res1d_nodes = [node for node in res1d.data.Nodes]
-    for reach in [r for r in res1d.data.Reaches if r.Name.replace("Weir:","") in reaches]:
-        muid = reach.Name.replace("Weir:","")
+    for reach in [r for r in res1d.reaches.values()]:
+        muid = reach.name.replace("Weir:","")
 
-        # reaches[muid].shape = arcpy.Polyline(arcpy.Array([arcpy.Point(coordinate.X, coordinate.Y) for coordinate in reach.GridPoints]))
-        reaches[muid].shape = arcpy.Polyline(
-            arcpy.Array([arcpy.Point(coordinate.X, coordinate.Y) for coordinate in reach.GridPoints]))
+        if not muid in reaches:
+            reaches[muid] = Reach(muid)
+
+        reaches[muid].length = reach.length
+        gridpoints = getattr(reach, "GridPoints", None)
+        if not gridpoints is None:
+            reaches[muid].shape = arcpy.Polyline(
+                arcpy.Array([arcpy.Point(gridpoint.X, gridpoint.Y) for gridpoint in gridpoints]))
+        else:
+            gridpoints = getattr(reach, "gridpoints", None)
+            if not gridpoints is None:
+                reaches[muid].shape = arcpy.Polyline(
+                    arcpy.Array([arcpy.Point(gridpoint.xcoord, gridpoint.ycoord) for gridpoint in gridpoints]))
+
+        if gridpoints is None:
+            raise AttributeError("Reach object has neither GridPoints nor gridpoints")
+
         if filter_to_extent and not (reaches[muid].shape[0][0].X > filter_to_extent[0] and reaches[muid].shape[0][0].X < filter_to_extent[2]
                 and reaches[muid].shape[0][0].Y > filter_to_extent[1] and reaches[muid].shape[0][0].Y < filter_to_extent[3]):
             reaches[muid].skip = True
 
-        reaches[muid].fromnode = res1d_nodes[reach.StartNodeIndex].ID
-        reaches[muid].tonode = res1d_nodes[reach.EndNodeIndex].ID
-        reaches[muid].length = reach.Length
+        if hasattr(reach, "start_node"):
+            reaches[muid].fromnode = reach.start_node
+            reaches[muid].tonode = reach.end_node
+        else:
+            reaches[muid].fromnode = res1d_nodes[reach.dataset[0].StartNodeIndex].ID
+            reaches[muid].tonode = res1d_nodes[reach.dataset[0].EndNodeIndex].ID
+
+        if not MU_model:
+            reaches[muid].diameter = reach.height
 
     df = res1d
 
     # dataframe = df.read()
     arcpy.AddMessage("Creating Shapefiles")
     arcpy.env.overwriteOutput = True
-    output_folder = r"C:\Papirkurv\Resultater"
+    output_folder = arcpy.env.scratchFolder
+    arcpy.AddMessage(output_folder)
 
     def getAvailableFilename(filepath):
         if arcpy.Exists(filepath):
@@ -499,6 +519,7 @@ def readRes1D(res1d_file, MU_model = None, gdb_path = None, filter_to_extent = N
 
     timeseries = [time.timestamp() for time in df.time_index]
     arcpy.AddMessage("Reading and writing Reach Results")
+
     with arcpy.da.InsertCursor(links_output_filepath, ["SHAPE@", "MUID", "Diameter", "FromNode", "ToNode", "MaxQ", "SumQ", "NetTypeNo", "EndQ", "MinQ", "MaxV", "EnergyGr", "FrictionLo", "FillDeg", "MaxTau", "Depthdiff"]) as cursor:
         for muid in set(reaches.keys()):
             reach = reaches[muid]
@@ -511,10 +532,10 @@ def readRes1D(res1d_file, MU_model = None, gdb_path = None, filter_to_extent = N
                             if quantity == "WaterLevel":
                                 queries.append(QueryDataReach(quantity, muid, 0))
                                 query_labels.append("WaterLevel_start")
-                                queries.append(QueryDataReach(quantity, muid, reach.length))
+                                queries.append(QueryDataReach(quantity, muid, res1d.reaches[muid].length))
                                 query_labels.append("WaterLevel_end")
                             else:
-                                queries.append(QueryDataReach(quantity, muid, reach.length))
+                                queries.append(QueryDataReach(quantity, muid, 0))
                                 query_labels.append(quantity)
 
                     query_result = res1d.read(queries)
@@ -555,6 +576,7 @@ def readRes1D(res1d_file, MU_model = None, gdb_path = None, filter_to_extent = N
                         else:
                             reach.tau = 1e3
                     except Exception as e:
+                        # arcpy.AddMessage(e)
                         pass
 
                     # Calculate Depth Difference
@@ -582,6 +604,7 @@ def readRes1D(res1d_file, MU_model = None, gdb_path = None, filter_to_extent = N
                 else:
                     energy_line_gradient = 0
                     friction_loss = 0
+
                 cursor.insertRow([reach.shape, muid, reach.diameter if reach.diameter and reach.diameter>0 else 0, reach.fromnode, reach.tonode, reach.max_discharge or 0, reach.sum_discharge or 0,
                               reach.net_type_no or 0, reach.end_discharge or 0,
                                   reach.min_discharge or 0, reach.max_flow_velocity or 0,
@@ -590,24 +613,26 @@ def readRes1D(res1d_file, MU_model = None, gdb_path = None, filter_to_extent = N
 
     arcpy.AddMessage("Reading and writing Node Results")
     with arcpy.da.InsertCursor(nodes_output_filepath, ["SHAPE@", "MUID", "Diameter", "Invert_lev", "Max_elev", "Flood_dep", "Flood_vol", "NetTypeNo", "max_hl", "max_I_V", "flow_area", "flow_diam", "end_depth", "Surcha", "SurchaBal", "MaxSurcha", "Ground_lev"]) as cursor:
-        for query_node in df.data.Nodes:
-            muid = query_node.ID
-
+        for query_node in df.nodes.values():
+            muid = query_node.id
             if muid not in nodes:
                 nodes[muid] = Node(muid)
 
             if filter_to_extent and not (
-                    query_node.XCoordinate > filter_to_extent[0] and query_node.XCoordinate < filter_to_extent[2]
-                    and query_node.YCoordinate > filter_to_extent[1] and query_node.YCoordinate < filter_to_extent[3]):
+                    query_node.xcoord > filter_to_extent[0] and query_node.xcoord < filter_to_extent[2]
+                    and query_node.ycoord > filter_to_extent[1] and query_node.ycoord < filter_to_extent[3]):
                 nodes[muid].skip = True
 
             if not nodes[muid].skip:
                 node = nodes[muid]
                 try:
                     if not node.ground_level:
-                        node.ground_level = query_node.CriticalLevel if hasattr(query_node, 'CriticalLevel') and query_node.CriticalLevel else query_node.GroundLevel
+                        node.ground_level = query_node.critical_level if hasattr(query_node, 'CriticalLevel') and query_node.critical_level else query_node.ground_level
                     if not node.invert_level:
-                        query_node.BottomLevel
+                        node.invert_level = query_node.bottom_level
+                    if not node.diameter:
+                        node.diameter = query_node.diameter
+
                 except Exception as e:
                     arcpy.AddMessage(e)
 
@@ -667,7 +692,7 @@ def readRes1D(res1d_file, MU_model = None, gdb_path = None, filter_to_extent = N
                         arcpy.AddMessage(traceback.format_exc())
                         arcpy.AddMessage(e)
 
-                cursor.insertRow([arcpy.Point(query_node.XCoordinate, query_node.YCoordinate), muid, node.diameter or 0,
+                cursor.insertRow([arcpy.Point(query_node.xcoord, query_node.ycoord), muid, node.diameter or 0,
                                   node.invert_level, node.max_level, node.flood_depth, node.flood_volume or 0,
                                   node.net_type_no or 0, node.max_headloss or 0,
                                   node.max_inlet_velocity or 0, node.flow_area, node.flow_area_diameter, node.end_depth or 0,
@@ -682,7 +707,7 @@ def readRes1D(res1d_file, MU_model = None, gdb_path = None, filter_to_extent = N
 
     now = datetime.datetime.now()
     arcpy.AddMessage("Code run at %s - simulation run at %s" % (now.strftime("%H:%M"), datetime.datetime.fromtimestamp(os.path.getmtime(res1d_file)).strftime("%H:%M")))
-    
+    arcpy.AddMessage((nodes_output_filepath, links_output_filepath))
     return nodes_output_filepath, links_output_filepath
 
 def m11extrapath():
@@ -2686,7 +2711,6 @@ class ReadMIKE1DResults(object):
 
         for res1d_filepath in res1d_filepaths:
             nodes_featureclass, reaches_featureclass = readRes1D(res1d_filepath, mike_database, gdb_path = arcpy.env.scratchGDB, filter_to_extent = [extent.lowerLeft.X-50, extent.lowerLeft.Y-50, extent.upperRight.X+50, extent.upperRight.Y+50] if read_only_extent else None, date_filter = None)
-            arcpy.AddMessage("BOBOBOBOB")
             arcpy.AddMessage(date_filter is None)
             nodes_featureclass = arcpy.Describe(nodes_featureclass).catalogPath
             reaches_featureclass = arcpy.Describe(reaches_featureclass).catalogPath
