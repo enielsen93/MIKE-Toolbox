@@ -476,6 +476,8 @@ class PipeDimensionToolTAPro(object):
         arcpy.AddMessage(graph.maxInflow)
 
         arcpy.SetProgressorLabel("Reading Rain Series")
+        if ".dfs0" in runoff_file.lower():
+            import_or_install(["mikeio"])
         rainseries = TimeAreaAnalyzer(runoff_file)
 
         rainseries.additional_discharge = graph.maxInflow

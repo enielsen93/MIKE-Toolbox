@@ -8,6 +8,42 @@ import numpy as np
 import networkx as nx
 import os
 
+def import_or_install(pkg_names):
+    imported = {}
+    root = tk.Tk()
+    root.withdraw()  # hide main window
+
+    for pkg in pkg_names:
+        try:
+            imported[pkg] = importlib.import_module(pkg)
+            continue
+        except ImportError:
+            pass
+
+        # Check user site-packages
+        user_site = site.getusersitepackages()
+        candidate = os.path.join(user_site, pkg)
+        if os.path.isdir(candidate):
+            sys.path.insert(0, user_site)
+            try:
+                imported[pkg] = importlib.import_module(pkg)
+                continue
+            finally:
+                sys.path.pop(0)
+
+        # Not found: prompt user with tkinter
+        msg = f"The library '{pkg}' is not installed.\nInstall now using ArcGIS Pro Python?"
+        if messagebox.askokcancel("Missing Library", msg):
+            propy_path = r"C:\Progra~1\ArcGIS\Pro\bin\Python\scripts\propy.bat"
+            cmd = [propy_path, "-m", "pip", "install"] + pkg_names
+            subprocess.check_call(cmd)
+            # Try import again
+            imported[pkg] = importlib.import_module(pkg)
+        else:
+            raise ImportError(f"{pkg} not installed and user declined installation.")
+
+    return imported
+
 class TimeAreaAnalyzer:
     """
        Load and process rainfall time series data from multiple file formats.
@@ -36,7 +72,8 @@ class TimeAreaAnalyzer:
     def __init__(self, rain_filepath):
         if os.path.splitext(rain_filepath)[1].lower() == ".dfs0":
             try:
-                import mikeio
+                libs = import_or_install(["mikeio"])
+                mikeio = libs["mikeio"]
             except ImportError:
                 raise ImportError(
                     "The 'mikeio' package is required but not installed.\n"
