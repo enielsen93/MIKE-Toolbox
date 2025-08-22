@@ -7,12 +7,10 @@ import pandas as pd
 import numpy as np
 import networkx as nx
 import os
+import importlib
 
 def import_or_install(pkg_names):
     imported = {}
-    root = tk.Tk()
-    root.withdraw()  # hide main window
-
     for pkg in pkg_names:
         try:
             imported[pkg] = importlib.import_module(pkg)
@@ -32,6 +30,9 @@ def import_or_install(pkg_names):
                 sys.path.pop(0)
 
         # Not found: prompt user with tkinter
+        import tkinter as tk
+        root = tk.Tk()
+        root.withdraw()  # hide main window
         msg = f"The library '{pkg}' is not installed.\nInstall now using ArcGIS Pro Python?"
         if messagebox.askokcancel("Missing Library", msg):
             propy_path = r"C:\Progra~1\ArcGIS\Pro\bin\Python\scripts\propy.bat"
