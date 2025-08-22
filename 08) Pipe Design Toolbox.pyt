@@ -10,26 +10,31 @@ import numpy as np
 import re
 import hashlib
 import math
-import os
 import sys
 import networkx as nx
 import pandas as pd
 import traceback
 import datetime
 import struct
+import sqlite3
+from copy import deepcopy
+import configparser
+import tkinter as tk
+from tkinter import messagebox
+import importlib
+import site
+import subprocess
+
 if "mapping" in dir(arcpy):
     arcgis_pro = False
     import arcpy.mapping as arcpymapping
     from arcpy.mapping import MapDocument as arcpyMapDocument
     import pythonaddins
-
-    mikeio1d_installed = False
 else:
     arcgis_pro = True
     import arcpy.mp as arcpymapping
     from arcpy.mp import ArcGISProject as arcpyMapDocument
     import importlib.util
-    mikeio1d_installed = importlib.util.find_spec("mikeio1d") is not None
 
 
 try:
@@ -53,17 +58,41 @@ except ImportError:
             local_pkg_path, "FOUND" if local_used else "NOT FOUND")
     )
 
-import sqlite3
-from copy import deepcopy
-import configparser
+def import_or_install(pkg_names):
+    imported = {}
+    root = tk.Tk()
+    root.withdraw()  # hide main window
 
+    for pkg in pkg_names:
+        try:
+            imported[pkg] = importlib.import_module(pkg)
+            continue
+        except ImportError:
+            pass
 
-if "mapping" in dir(arcpy):
-    import arcpy.mapping as apmapping
-    from arcpy.mapping import MapDocument as MapDocument
-else:
-    import arcpy.mp as apmapping
-    from arcpy.mp import ArcGISProject as MapDocument
+        # Check user site-packages
+        user_site = site.getusersitepackages()
+        candidate = os.path.join(user_site, pkg)
+        if os.path.isdir(candidate):
+            sys.path.insert(0, user_site)
+            try:
+                imported[pkg] = importlib.import_module(pkg)
+                continue
+            finally:
+                sys.path.pop(0)
+
+        # Not found: prompt user with tkinter
+        msg = f"The library '{pkg}' is not installed.\nInstall now using ArcGIS Pro Python?"
+        if messagebox.askokcancel("Missing Library", msg):
+            propy_path = r"C:\Progra~1\ArcGIS\Pro\bin\Python\scripts\propy.bat"
+            cmd = [propy_path, "-m", "pip", "install"] + pkg_names
+            subprocess.check_call(cmd)
+            # Try import again
+            imported[pkg] = importlib.import_module(pkg)
+        else:
+            raise ImportError(f"{pkg} not installed and user declined installation.")
+
+    return imported
 
 diameters_plastic = [188, 235, 297, 377, 493, 588, 781, 985, 1185, 1385, 1485, 1585, 2000, 2200, 2400, 2600, 2800, 3000]
 diameters_concrete = [200, 300, 400, 500, 600, 700, 800, 900, 1000, 1200, 1400, 1600, 1800, 2000, 2250, 2500, 3000, 3500]
@@ -441,7 +470,7 @@ class PipeDimensionToolTAPro(object):
             graph.network.remove_edges_from(breakEdges)
             for edge in breakEdges:
                 arcpy.AddMessage(
-                    "Removed edge %s-%s because %s is included in list of nodes to end trace at" % (edge[0], edge[1]))
+                    "Removed edge %s-%s because it is included in list of nodes to end trace at" % (edge[0], edge[1]))
 
 
         arcpy.AddMessage(graph.maxInflow)
@@ -2898,9 +2927,15 @@ class DrawLongitudinalProfiles(object):
         draw_critical_level = parameters[7].Value
         reference_scale = parameters[8].Value
 
-        if arcgis_pro:
-            from mikeio1d import open as open_res1d
-            from mikeio1d.res1d import Res1D, QueryDataNode, QueryDataReach, QueryDataStructure
+        if arcgis_pro and result_files:
+            if result_files:
+                libs = import_or_install(["mikeio1d"])
+                mikeio1d = libs["mikeio1d"]
+                #from mikeio1d.res1d import Res1D, QueryDataNode, QueryDataReach, QueryDataStructure
+                res1d = mikeio1d.res1d
+                Res1D = res1d.Res1D
+                QueryDataReach = res1d.QueryDataReach
+
             # from shapely import wkb
             aprx = arcpy.mp.ArcGISProject("CURRENT")
             map_obj = aprx.activeMap
@@ -3150,7 +3185,7 @@ class DrawLongitudinalProfiles(object):
                             except Exception as e:
                                 pass
 
-                res1d = open_res1d(f, reaches = links_fixed)
+                res1d = res1d.Res1D(f, reaches = links_fixed)
                 for pipe_i, pipe in enumerate(links_fixed):
                     if pipe in res1d.reaches:
                         try:
