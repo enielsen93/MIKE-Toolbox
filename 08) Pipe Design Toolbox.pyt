@@ -59,9 +59,12 @@ except ImportError:
     )
 
 def import_or_install(pkg_names):
+    import tkinter as tk
+    import importlib
+    import site
+    from tkinter import messagebox
+    import subprocess
     imported = {}
-    root = tk.Tk()
-    root.withdraw()  # hide main window
 
     for pkg in pkg_names:
         try:
@@ -81,6 +84,8 @@ def import_or_install(pkg_names):
             finally:
                 sys.path.pop(0)
 
+        root = tk.Tk()
+        root.withdraw()  # hide main window
         # Not found: prompt user with tkinter
         msg = f"The library '{pkg}' is not installed.\nInstall now using ArcGIS Pro Python?"
         if messagebox.askokcancel("Missing Library", msg):
@@ -2909,6 +2914,8 @@ class DrawLongitudinalProfiles(object):
         import pandas as pd
         import numpy as np
         import networkx as nx
+		import matplotlib
+		matplotlib.use("TkAgg")
         import matplotlib.pyplot as plt
         from matplotlib.backends.backend_pdf import PdfPages
         from matplotlib.patches import Rectangle

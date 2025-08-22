@@ -37,10 +37,55 @@ except ImportError:
             local_pkg_path, "FOUND" if local_used else "NOT FOUND")
     )
 
+def import_or_install(pkg_names):
+    import importlib
+    import site
+    import tkinter as tk
+    from tkinter import messagebox
+    import subprocess
+    imported = {}
 
+    for pkg in pkg_names:
+        try:
+            imported[pkg] = importlib.import_module(pkg)
+            continue
+        except ImportError:
+            pass
+
+        # Check user site-packages
+        user_site = site.getusersitepackages()
+        candidate = os.path.join(user_site, pkg)
+        if os.path.isdir(candidate):
+            sys.path.insert(0, user_site)
+            try:
+                imported[pkg] = importlib.import_module(pkg)
+                continue
+            finally:
+                sys.path.pop(0)
+
+        root = tk.Tk()
+        root.withdraw()  # hide main window
+        # Not found: prompt user with tkinter
+        msg = f"The library '{pkg}' is not installed.\nInstall now using ArcGIS Pro Python?"
+        if messagebox.askokcancel("Missing Library", msg):
+            propy_path = r"C:\Progra~1\ArcGIS\Pro\bin\Python\scripts\propy.bat"
+            cmd = [propy_path, "-m", "pip", "install"] + pkg_names
+            subprocess.check_call(cmd)
+            # Try import again
+            imported[pkg] = importlib.import_module(pkg)
+        else:
+            raise ImportError(f"{pkg} not installed and user declined installation.")
+
+    return imported
 
 def readRes1D(res1d_file, MU_model = None, gdb_path = None, filter_to_extent = None, date_filter = None):
-    from mikeio1d.res1d import Res1D, QueryDataNode, QueryDataReach, QueryDataStructure
+    libs = import_or_install(["mikeio1d"])
+    mikeio1d = libs["mikeio1d"]
+    res1d = mikeio1d.res1d
+    Res1D = res1d.Res1D
+    QueryDataNode = res1d.QueryDataNode
+    QueryDataReach = res1d.QueryDataReach
+    QueryDataStructure = res1d.QueryDataStructure
 
     if MU_model:
         ms_Catchment = os.path.join(MU_model, "ms_Catchment" if ".mdb" in MU_model else "msm_Catchment")
@@ -2487,8 +2532,14 @@ class DrawSelection(object):
         pipe_layer = parameters[0].Value
 
         if arcgis_pro:
-            from mikeio1d import open as open_res1d
-            from mikeio1d.res1d import Res1D, QueryDataNode, QueryDataReach, QueryDataStructure
+            libs = import_or_install(["mikeio1d"])
+            mikeio1d = libs["mikeio1d"]
+            res1d = mikeio1d.res1d
+            Res1D = res1d.Res1D
+            QueryDataNode = res1d.QueryDataNode
+            QueryDataReach = res1d.QueryDataReach
+            QueryDataStructure = res1d.QueryDataStructure
+
             from shapely import wkb
             aprx = arcpy.mp.ArcGISProject("CURRENT")
             map_obj = aprx.activeMap
@@ -2614,7 +2665,14 @@ class ReadMIKE1DResults(object):
         return
 
     def execute(self, parameters, messages):
-        from mikeio1d.res1d import Res1D, QueryDataNode, QueryDataReach, QueryDataStructure
+        libs = import_or_install(["mikeio1d"])
+        mikeio1d = libs["mikeio1d"]
+        res1d = mikeio1d.res1d
+        Res1D = res1d.Res1D
+        QueryDataNode = res1d.QueryDataNode
+        QueryDataReach = res1d.QueryDataReach
+        QueryDataStructure = res1d.QueryDataStructure
+
         res1d_filepaths = [f.replace("'", "") for f in parameters[0].ValueAsText.split(";")] if parameters[0].ValueAsText else None
         mike_database = parameters[1].ValueAsText
         display_type = parameters[2].ValueAsText
@@ -3015,7 +3073,13 @@ class PlotRes1D(object):
 
         result_files = [f.replace("'", "") for f in parameters[2].ValueAsText.split(";")] if parameters[2].ValueAsText else None
 
-        from mikeio1d.res1d import Res1D, QueryDataNode, QueryDataReach, QueryDataStructure
+        libs = import_or_install(["mikeio1d"])
+        mikeio1d = libs["mikeio1d"]
+        res1d = mikeio1d.res1d
+        Res1D = res1d.Res1D
+        QueryDataNode = res1d.QueryDataNode
+        QueryDataReach = res1d.QueryDataReach
+        QueryDataStructure = res1d.QueryDataStructure
 
         manholes_selected = []
         pipes_selected = []
@@ -3025,8 +3089,9 @@ class PlotRes1D(object):
         if pipe_layer:
             pipes_selected = [row[0] for row in arcpy.da.SearchCursor(pipe_layer, ["MUID"])]
 
+        import matplotlib
+        matplotlib.use("TkAgg")
         import matplotlib.pyplot as plt
-
         # Parameters
         subplots_count = 2 if manholes_selected and pipes_selected else 1
         fig_width_cm = 15.7  # Total figure width in centimeters
@@ -3151,7 +3216,8 @@ class PlotRes1D(object):
 
             elif ".dfs0" in result_file:
                 for ax in axs:
-                    import mikeio
+                    libs = import_or_install(["mikeio"])
+                    mikeio = libs["mikeio"]
                     xlim = ax.get_xlim()
                     dfs0 = mikeio.read(result_file).to_dataframe()
                     ax2 = ax.twinx()
@@ -3187,7 +3253,6 @@ class PlotRes1D(object):
                 label.set_horizontalalignment('right')
 
             axs[subplot_i].grid(which='major', linestyle='--', alpha=0.7)
-
 
         # axs[1].legend()
         plt.tight_layout()

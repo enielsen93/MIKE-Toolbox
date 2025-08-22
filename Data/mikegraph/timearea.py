@@ -10,6 +10,11 @@ import os
 import importlib
 
 def import_or_install(pkg_names):
+    import importlib
+    import site
+    import tkinter as tk
+    from tkinter import messagebox
+    import subprocess
     imported = {}
     for pkg in pkg_names:
         try:

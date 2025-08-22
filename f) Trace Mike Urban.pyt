@@ -904,7 +904,9 @@ class TimeAreaMethod(object):
                 rain = rain_event[max(time_i_adjusted-conc_time,0):max(0,time_i_adjusted)]
                 runoff[time_i] = np.sum(rain)/conc_time if rain.any() else 0
             return runoff
-
+		
+		import matplotlib
+		matplotlib.use("TkAgg")
         import matplotlib.pyplot as plt
         box_rains = {5 : 36.63306334, 10 : 26.8206342, 30 : 13.94609554, 60 : 8.63879167, 180 : 3.842244756, 360 : 2.269104561}
         for duration, intensity in box_rains.items():
