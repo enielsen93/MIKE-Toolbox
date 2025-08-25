@@ -474,8 +474,11 @@ class PipeDimensionToolTAPro(object):
                           edge[0] in re.findall("([^'^(),; \n]+)", breakChainOnNodes)]
             graph.network.remove_edges_from(breakEdges)
             for edge in breakEdges:
-                arcpy.AddMessage(
-                    "Removed edge %s-%s because it is included in list of nodes to end trace at" % (edge[0], edge[1]))
+                try:
+                    arcpy.AddMessage(
+                        "Removed edge %s-%s because it is included in list of nodes to end trace at" % (edge[0], edge[1]))
+                except Exception as e:
+                    pass
 
 
         arcpy.AddMessage(graph.maxInflow)
@@ -505,14 +508,28 @@ class PipeDimensionToolTAPro(object):
                 if graphs_count > 15:
                     arcpy.AddMessage("Displaying no more than 15 graphs!")
                 else:
-                    
+                    import matplotlib
+                    matplotlib.use("TkAgg")
+                    import matplotlib.pyplot as plt
+
+                    rationel_curves = rainseries.rationelCurve(target_manhole, graph)
+                    plt.figure(figsize=(6.18, 3.94))
+                    arcpy.AddMessage(timearea_curves[target_manhole])
+                    plt.plot(timearea_curves[target_manhole], linestyle='-', label = "Time Area Curve")
+                    plt.plot(rationel_curves, linestyle='--', label = "Rationel Curve (10 min)")
+                    plt.title("Discharge Curve - {}".format(target_manhole))  # Python 2.7 compatible
+                    plt.xlabel("Time")
+                    plt.ylabel("Discharge (L/s)")
+                    plt.grid(True, linestyle="--", alpha=0.6)
+                    plt.tight_layout()
+                    plt.legend()
+                    plt.show()
                     graphs_count += 1
                     # old_setting = arcpy.env.addOutputsToMap
                     # arcpy.env.addOutputsToMap = False
                     # table = arcpy.management.CreateTable(arcpy.env.scratchGDB, "Tab" + target_manhole, os.path.dirname(
                     #     os.path.realpath(__file__)) + "\Data\PipeDimensionTool\Template.dbf")[0]
 
-                    rationel_curves = rainseries.rationelCurve(target_manhole, graph)
 
                     # with arcpy.da.InsertCursor(table, ["Disch_ta", "Disch_rat"]) as cursor:
                     #     for discharge_ta, discharge_rat in zip(timearea_curves[target_manhole], rationel_curves):
@@ -535,6 +552,7 @@ class PipeDimensionToolTAPro(object):
                     # arcpy.MakeGraph_management(graph_template, gr, target_manhole)
                     # arcpy.env.addOutputsToMap = old_setting
                 # return
+
 
             peak_discharge[target_manhole] = np.max(timearea_curves[target_manhole])
             peak_discharge_time[target_manhole] = np.argmax(timearea_curves[target_manhole])
@@ -666,7 +684,7 @@ class PipeDimensionToolTAPro(object):
                         else:
                             D = diameters_plastic if not "concrete" in row[1].lower() and not "beton" in row[
                                 1].lower() else diameters_concrete
-                        slope = slopeOverwrite if slopeOverwrite else row[0] * 1e-2
+                        slope = slopeOverwrite if slopeOverwrite is not None else (row[0] * 1e-2 if row[0] is not None else 10e-3)
                         # if writeDischargeInstead:
                         #     diameter = # ins_row = (row[4], row[3], peak_discharge[msm_Link_Network.links[row[3]].fromnode], row[2], row[0], row[5], row[6])
                         #     ins_cursor.insertRow(ins_row)
