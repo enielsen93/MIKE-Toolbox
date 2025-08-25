@@ -38,7 +38,7 @@ def import_or_install(pkg_names):
         import tkinter as tk
         root = tk.Tk()
         root.withdraw()  # hide main window
-        msg = f"The library '{pkg}' is not installed.\nInstall now using ArcGIS Pro Python?"
+        msg = "The library '" + pkg + "' is not installed.\nInstall now using ArcGIS Pro Python?"
         if messagebox.askokcancel("Missing Library", msg):
             propy_path = r"C:\Progra~1\ArcGIS\Pro\bin\Python\scripts\propy.bat"
             cmd = [propy_path, "-m", "pip", "install"] + pkg_names
@@ -46,7 +46,7 @@ def import_or_install(pkg_names):
             # Try import again
             imported[pkg] = importlib.import_module(pkg)
         else:
-            raise ImportError(f"{pkg} not installed and user declined installation.")
+            raise ImportError(pkg + "not installed and user declined installation.")
 
     return imported
 
@@ -146,7 +146,7 @@ if __name__ == "__main__":
     # graph = mikegraph.MikeNetwork(r"C:\Users\elnn\OneDrive - Ramboll\Documents\Aarhus Vand\Soenderhoej\MIKE\MIKE_URBAN\_ORIGINAL\Viby_detailed_200101_40\Viby_detailed_200101_40.sqlite")
     # graph.map_network()
 
-    rainseries = TimeAreaAnalyzer(r"C:\Papirkurv\Webinar presentation\02_RAIN\CDS_5 min_samlet.DFS0")
+    rainseries = TimeAreaAnalyzer(r"C:\Papirkurv\Webinar presentation\02_RAIN\CDS_5 min_samlet.txt")
     # rainseries.additional_discharge = {"SEMI25":0.25}
     #
     # discharge_ta = rainseries.timeareaCurve(u'D43440R', graph)

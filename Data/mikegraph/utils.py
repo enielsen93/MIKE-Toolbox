@@ -19,15 +19,15 @@ def calculate_full_flow(diameter, slope, material, resolution=1e-6):
             Defaults to 1e-6.
 
     Returns:
-        float or None: Full-pipe discharge in m³/s. Returns None if solution 
+        float or None: Full-pipe discharge in m3/s. Returns None if solution
             doesn't converge within the specified resolution.
 
     Notes:
-        - Uses kinematic viscosity of 1.3e-6 m²/s (water at ~10°C)
+        - Uses kinematic viscosity of 1.3e-6 m2/s (water at 10C)
         - Employs bisection method to find velocity that satisfies flow equations
         - Iteratively solves Colebrook-White equation for friction factor
         - Hydraulic radius R = D/4 for circular pipes running full
-        - Flow area = π(D/2)² for circular cross-section
+        - Flow area = pi(D/2)2 for circular cross-section
     Examples:
         >>> Q = calculate_full_flow(0.30, 0.005, "PVC")
     """
