@@ -505,34 +505,35 @@ class PipeDimensionToolTAPro(object):
                 if graphs_count > 15:
                     arcpy.AddMessage("Displaying no more than 15 graphs!")
                 else:
+                    
                     graphs_count += 1
-                    old_setting = arcpy.env.addOutputsToMap
-                    arcpy.env.addOutputsToMap = False
-                    table = arcpy.management.CreateTable(arcpy.env.scratchGDB, "Tab" + target_manhole, os.path.dirname(
-                        os.path.realpath(__file__)) + "\Data\PipeDimensionTool\Template.dbf")[0]
+                    # old_setting = arcpy.env.addOutputsToMap
+                    # arcpy.env.addOutputsToMap = False
+                    # table = arcpy.management.CreateTable(arcpy.env.scratchGDB, "Tab" + target_manhole, os.path.dirname(
+                    #     os.path.realpath(__file__)) + "\Data\PipeDimensionTool\Template.dbf")[0]
 
                     rationel_curves = rainseries.rationelCurve(target_manhole, graph)
 
-                    with arcpy.da.InsertCursor(table, ["Disch_ta", "Disch_rat"]) as cursor:
-                        for discharge_ta, discharge_rat in zip(timearea_curves[target_manhole], rationel_curves):
-                            cursor.insertRow([discharge_ta, discharge_rat])
+                    # with arcpy.da.InsertCursor(table, ["Disch_ta", "Disch_rat"]) as cursor:
+                    #     for discharge_ta, discharge_rat in zip(timearea_curves[target_manhole], rationel_curves):
+                    #         cursor.insertRow([discharge_ta, discharge_rat])
 
-                    table_view = arcpy.MakeTableView_management(table, r"%s_tv" % os.path.basename(table))
+                    # table_view = arcpy.MakeTableView_management(table, r"%s_tv" % os.path.basename(table))
 
-                    arcpy.env.addOutputsToMap = True
-                    gr = arcpy.Graph()
+                    # arcpy.env.addOutputsToMap = True
+                    # gr = arcpy.Graph()
 
-                    oid_fieldname = arcpy.Describe(table).OIDFieldName
+                    # oid_fieldname = arcpy.Describe(table).OIDFieldName
 
-                    disch_ta_plot = gr.addSeriesAreaVertical(table_view, 'Disch_ta', oid_fieldname)
-                    # arcpy.AddMessage(dir(gr.graphPropsGeneral))
-                    gr.addSeriesLineVertical(table_view, 'Disch_rat', oid_fieldname)
-                    gr.graphPropsGeneral.title = target_manhole
+                    # disch_ta_plot = gr.addSeriesAreaVertical(table_view, 'Disch_ta', oid_fieldname)
+                    arcpy.AddMessage(dir(gr.graphPropsGeneral))
+                    # gr.addSeriesLineVertical(table_view, 'Disch_rat', oid_fieldname)
+                    # gr.graphPropsGeneral.title = target_manhole
 
-                    graph_template = os.path.dirname(
-                        os.path.realpath(__file__)) + "\Data\PipeDimensionTool\graph_template_rev1.grf"
-                    arcpy.MakeGraph_management(graph_template, gr, target_manhole)
-                    arcpy.env.addOutputsToMap = old_setting
+                    # graph_template = os.path.dirname(
+                    #     os.path.realpath(__file__)) + "\Data\PipeDimensionTool\graph_template_rev1.grf"
+                    # arcpy.MakeGraph_management(graph_template, gr, target_manhole)
+                    # arcpy.env.addOutputsToMap = old_setting
                 # return
 
             peak_discharge[target_manhole] = np.max(timearea_curves[target_manhole])

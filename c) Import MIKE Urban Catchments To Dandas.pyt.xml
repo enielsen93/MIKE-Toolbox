@@ -1,4 +1,0 @@
-<metadata xml:lang="da"><Esri><CreaDate>20181025</CreaDate><CreaTime>12202000</CreaTime><ArcGISFormat>1.0</ArcGISFormat><SyncOnce>TRUE</SyncOnce><ModDate>20191121</ModDate><ModTime>11515400</ModTime><scaleRange><minScale>150000000</minScale><maxScale>5000</maxScale></scaleRange><ArcGISProfile>ItemDescription</ArcGISProfile></Esri><toolbox name="ImportMUCatchmentsToDanDas" alias="Import MU Catchments to DanDas"><arcToolboxHelpPath>c:\program files (x86)\arcgis\desktop10.3\Help\gp</arcToolboxHelpPath></toolbox><dataIdInfo><idCitation><resTitle>ImportMUCatchmentsToDanDas</resTitle></idCitation><idPurp>Importér Mike Urban deloplande til Dandas.
-
-Struktur:
-- Vælg Mike Urban </idPurp><searchKeys><keyword>mikeurban</keyword></searchKeys></dataIdInfo><distInfo><distributor><distorFormat><formatName>ArcToolbox Toolbox</formatName></distorFormat></distributor></distInfo><mdHrLv><ScopeCd value="005"></ScopeCd></mdHrLv></metadata>
