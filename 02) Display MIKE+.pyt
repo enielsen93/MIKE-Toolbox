@@ -1582,7 +1582,6 @@ class DisplaySqlitePro(object):
             new_text = re.sub(pattern, replacer, text, flags=re.MULTILINE)
             return new_text
 
-
         # SETTING THE SQL QUERY TO THE FIELDS FOUND IN THE DATABASE - THEY VARY A LOT BETWEEN MIKE+ VERSIONS
         pattern = r'select\s+(.+?)\s+from\s+([\w.]+)'
         matches = re.finditer(pattern, new_content, re.IGNORECASE)
@@ -1615,12 +1614,12 @@ class DisplaySqlitePro(object):
         temp_dir = tempfile.gettempdir()
 
         output_path = os.path.join(temp_dir, 'mike_project_layer_modified.lyrx')
-
+        arcpy.AddMessage(output_path)
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(new_content)
 
         arcpy.AddMessage(output_path)
-        df.addDataFromPath(output_path)
+        empty_group_layer = df.addDataFromPath(output_path)
 
         msm_Node = MU_database + "\main.msm_Node"
         msm_Link = MU_database + "\main.msm_Link"
@@ -1646,7 +1645,7 @@ class DisplaySqlitePro(object):
         def printStepAndTime(txt):
             arcpy.AddMessage("%s - %d" % (txt, time.time() - start_time))
 
-        empty_group_layer = [lyr for lyr in df.listLayers() if lyr.isGroupLayer][0]
+        # empty_group_layer = [lyr for lyr in df.listLayers() if lyr.isGroupLayer][0]
 
         empty_group_layer.name = os.path.splitext(os.path.basename(MU_database))[0]
 

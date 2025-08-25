@@ -71,14 +71,15 @@ def _check_dependencies():
     
     if missing_deps:
         raise ImportError(
-            f"Missing required dependencies: {', '.join(missing_deps)}\n"
-            f"Install with: pip install {' '.join(missing_deps)}"
-        )
+            "Missing required dependencies: {}\nInstall with: pip install {}".format(
+            ', '.join(missing_deps),
+            ' '.join(missing_deps)
+        ))
     
     if optional_missing:
         import warnings
         warnings.warn(
-            f"Optional dependencies not found: {', '.join(optional_missing)}",
+            "Optional dependencies not found: " + ', '.join(optional_missing),
             ImportWarning
         )
 

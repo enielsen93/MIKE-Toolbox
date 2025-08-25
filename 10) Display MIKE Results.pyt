@@ -2649,9 +2649,20 @@ class ReadMIKE1DResults(object):
             parameterType="Optional",
             direction="Input"
         )
+
+        has_autoset = arcpy.Parameter(
+            displayName="has_autoset",
+            name="has_autoset",
+            datatype="Boolean",
+            parameterType="Optional",
+            direction="Input"
+        )
+        has_autoset.parameterType = "Derived"  # won't auto-populate
+
+
         date_filter.category = "Filter results"
 
-        parameters = [res1d_filepath, mike_database, display_type, display_results, read_only_extent, date_filter]
+        parameters = [res1d_filepath, mike_database, display_type, display_results, read_only_extent, date_filter, has_autoset]
 
         return parameters
 
@@ -2667,12 +2678,13 @@ class ReadMIKE1DResults(object):
 
         display_results = parameters[3]
         display_type = parameters[2]
+        has_autoset = parameters[6]
         if display_results.Value:
             display_type.enabled = True
         else:
             display_type.enabled = False
 
-        if res1d_filepath and not parameters[1].Value:
+        if res1d_filepath and not parameters[1].Value and not has_autoset.Value:
             model_folder = os.path.dirname(os.path.dirname(res1d_filepath))
             MU_model = os.path.join(model_folder, os.path.basename(model_folder)) + ".sqlite"
 
@@ -2684,6 +2696,7 @@ class ReadMIKE1DResults(object):
                 if os.path.exists(MU_model):
                     parameters[1].Value = MU_model
                     # print("Assuming MIKE database is %s" % (MU_model))
+            has_autoset.Value = True
         return
 
     def updateMessages(self, parameters):  # optional

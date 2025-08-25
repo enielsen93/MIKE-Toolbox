@@ -3218,7 +3218,7 @@ class DrawLongitudinalProfiles(object):
                             except Exception as e:
                                 pass
 
-                res1d = res1d.Res1D(f, reaches = links_fixed)
+                res1d = Res1D(f, reaches = links_fixed)
                 for pipe_i, pipe in enumerate(links_fixed):
                     if pipe in res1d.reaches:
                         try:

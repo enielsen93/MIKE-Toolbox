@@ -1254,7 +1254,7 @@ class CopyMikeUrbanFeatures(object):
                 if duplicate_links.size > 0:
                     if is_sqlite:
                         if arcgis_pro:
-                            confirm_assignment("The following links are already in the MIKE+ Database: %s" % ", ".join(
+                            response = confirm_assignment("The following links are already in the MIKE+ Database: %s" % ", ".join(
                                     duplicate_links), "Confirm?", no_return = "Cancel")
                         else:
                             response = pythonaddins.MessageBox(
