@@ -1717,14 +1717,15 @@ class DuplicateCatchments(object):
             # For each duplicate MUID, assign the original MUID as the first element in its reassignment list
             for MUID in MUIDs_reassigned:
                 MUIDs_reassigned[MUID][0] = MUID
-            arcpy.AddMessage(msm_HModA_table)
-
+            # arcpy.AddMessage([f.name for f in arcpy.ListFields(msm_HModA) if f.name.lower() != "objectid"])
+            # arcpy.AddMessage("BOB?)")
             # Use an InsertCursor to add new rows to the msm_HModA table with the reassigned MUIDs
-            with arcpy.da.InsertCursor(msm_HModA, '*') as cursor:
+            with arcpy.da.InsertCursor(msm_HModA, [f.name for f in arcpy.ListFields(msm_HModA) if f.name.lower() != "objectid"]) as cursor:
                 for original_MUID in MUIDs_reassigned.keys():
                     for new_MUID in MUIDs_reassigned[original_MUID]:
-                        row = list(msm_HModA_table[original_MUID])  # Copy the original row
-                        row[1] = new_MUID  # Replace the MUID with the reassigned one
+                        row = list(msm_HModA_table[original_MUID])[1:]  # Copy the original row
+                        row[0] = new_MUID  # Replace the MUID with the reassigned one
+                        arcpy.AddMessage("Inserting row %s " % row)
                         cursor.insertRow(row)  # Insert the new row with the updated MUID
                     arcpy.AddMessage("Inserted new row %s in msm_HModA table." % row)
 
