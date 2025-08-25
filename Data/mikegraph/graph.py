@@ -241,8 +241,11 @@ class MikeNetwork:
                             node = self.network.links[row[0]].tonode
                             self.maxInflow[node] = self.maxInflow[node] + ms_TabD_dict[
                                 row[1]] if node in self.maxInflow else ms_TabD_dict[row[1]]
-                            self.graph.remove_edge(self.network.links[row[0]].fromnode,
-                                                   self.network.links[row[0]].tonode)
+                            try:
+                                self.graph.remove_edge(self.network.links[row[0]].fromnode,
+                                                       self.network.links[row[0]].tonode)
+                            except Exception as e:
+                                pass
 
             else:
                 with arcpy.da.SearchCursor(self._msm_PasReg, ["LinkID", "FunctionID"],
