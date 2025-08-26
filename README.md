@@ -38,8 +38,10 @@ These instructions will guide you through installing and using MIKE Urban Tools.
 
 ---
 
-## Installing Python Requirements in ArcGIS Pro
-If you are using ArcGIS Pro, follow these steps to safely install dependencies `mikeio` and `mikeio1d`.
+## Installing Python Requirements in ArcGIS Pro Manually
+If you are using ArcGIS Pro, the tools will try to install the dependencies `mikeio` and `mikeio1d` automatically the first time you open them.  
+
+If the automatic installation fails, you can install these dependencies manually using the instructions below.
 
 ### 1. Clone your Python environment
 Open **ArcGIS Pro → Project → Python → Manage Environments**, select your default environment, and click **Clone**.  
