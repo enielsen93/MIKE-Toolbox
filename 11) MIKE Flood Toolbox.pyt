@@ -113,8 +113,8 @@ class InterpolateToMesh(object):
         DHMRasterXs = lower_left_corner.X + np.arange(raster.width)*raster.meanCellWidth + raster.meanCellWidth/2
         DHMRasterYs = lower_left_corner.Y + np.arange(raster.height)*raster.meanCellHeight + raster.meanCellHeight/2
 
-        # DHMRasterXs = np.arange(DHMRasterInfo[0],DHMRasterInfo[0]+DHMRaster.shape[1]*DHMRasterInfo[2],float(DHMRasterInfo[2])).astype(np.float32)
-        # DHMRasterYs = np.arange(DHMRasterInfo[1],DHMRasterInfo[1]+DHMRaster.shape[0]*DHMRasterInfo[3],float(DHMRasterInfo[3])).astype(np.float32 )
+        # DHMRasterXs = np.arange(DHMRasterInfo[0],DHMRasterInfo[0]+DHMRaster.shape[1]*DHMRasterInfo[2],float(DHMRasterInfo[2])).astype(float)
+        # DHMRasterYs = np.arange(DHMRasterInfo[1],DHMRasterInfo[1]+DHMRaster.shape[0]*DHMRasterInfo[3],float(DHMRasterInfo[3])).astype(float)
 
         interp = RegularGridInterpolator((DHMRasterYs+raster.meanCellHeight, DHMRasterXs+raster.meanCellWidth), DHMRaster)
 

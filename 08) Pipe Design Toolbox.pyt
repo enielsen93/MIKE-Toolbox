@@ -1747,7 +1747,7 @@ class InterpolateInvertLevels(object):
                              weight=link.length)
 
         path_nodes = nx.bellman_ford_path(network, start_node, end_node, weight="weight")
-        lengths = np.zeros(len(path_nodes) - 1, dtype=np.float)
+        lengths = np.zeros(len(path_nodes) - 1, dtype=float)
         for i in range(1, len(path_nodes)):
             lengths[i - 1] = network.edges[path_nodes[i - 1], path_nodes[i]]["weight"]
 
@@ -2960,7 +2960,7 @@ class DrawLongitudinalProfiles(object):
         draw_critical_level = parameters[7].Value
         reference_scale = parameters[8].Value
 
-        if arcgis_pro and result_files:
+        if arcgis_pro:
             if result_files:
                 libs = import_or_install(["mikeio1d"])
                 mikeio1d = libs["mikeio1d"]
@@ -3296,7 +3296,7 @@ class DrawLongitudinalProfiles(object):
             # Set up Figures
 
             if draw_map:
-                figure_width = max(8, 8 + 0.5 * (chainage[-1]/20 - 2) + 5)
+                figure_width = max(8, 8 + 0.5 * (chainage[-1]/30 - 2) + 5)
 
                 map_width = 5
 
@@ -3338,7 +3338,7 @@ class DrawLongitudinalProfiles(object):
                 # map_height_px = int(1e6 / map_width_px)
 
             else:
-                figure_width = max(8, 8 + 0.5 * (chainage[-1] / 20 - 2))
+                figure_width = max(8, 8 + 0.5 * (chainage[-1] / 30 - 2))
                 fig, ax_plot = plt.subplots(figsize=(figure_width, 5), dpi=300, constrained_layout=True)
                 fig.subplots_adjust(left=0.02, right=0.98, top=0.95, bottom=0.09)
                 ax_map = None
@@ -3489,23 +3489,22 @@ class DrawLongitudinalProfiles(object):
 
                 current_scale = view.camera.scale
                 view.camera.scale = current_scale * zoom_level
-                map_obj.referenceScale = reference_scale
 
                 temp_dir = tempfile.gettempdir()
-                temp_png = os.path.join(temp_dir, "arcgis_map_snapshot")
+                temp_png = os.path.join(temp_dir, "arcgis_map_snapshot.jpg")
 
                 # Export active map to PNG
 
-                view.exportToPNG(temp_png, height = 1500, width = 1500)
+                view.exportToJPEG(temp_png, height = 1500, width = 1500, world_file = False, jpeg_quality = 65)
                 from PIL import Image
 
                 # Convert PNG to JPG
-                with Image.open(temp_png + ".png") as img:
-                    rgb_img = img.convert('RGB')  # Remove alpha channel if present
-                    temp_jpg = temp_png + ".jpg"
-                    rgb_img.save(temp_jpg, 'JPEG', quality=65, optimize=True)
+                # with Image.open(temp_png + ".jpg") as img:
+                #     rgb_img = img.convert('RGB')  # Remove alpha channel if present
+                #     temp_jpg = temp_png + ".jpg"
+                #     rgb_img.save(temp_jpg, 'JPEG', quality=65, optimize=True)
 
-                img = mpimg.imread(temp_jpg)
+                img = mpimg.imread(temp_png)
                 # ax_map.imshow(img)
                 # plt.show()
                 ax_map.set_axis_off()

@@ -664,7 +664,7 @@ class CatchmentProcessingScalgo(object):
                 for row in cursor:
                     catchments[row[0]].old_imperviousness = row[1]
 
-        in_memory_fc = r"in_memory\Bob.shp"
+        in_memory_fc = r"in_memory\catchment"
         arcpy.CopyFeatures_management(ms_Catchment, in_memory_fc)
         arcpy.RepairGeometry_management(in_memory_fc)
         # arcpy.AddMessage(str(/))
@@ -1115,7 +1115,7 @@ class FAS2Deloplande(object):
         with arcpy.da.SearchCursor("catchmentFile", ['SHAPE@']) as catchmentcursor:
             for row in catchmentcursor:
                 catchments = catchments+1
-        catchmentForbrug = np.zeros((catchments),dtype=np.float)
+        catchmentForbrug = np.zeros((catchments),dtype=float)
         arcpy.SetProgressor("step","Calculating FAS per catchment", 0, int(arcpy.GetCount_management(FASFile)[0]), 1)
         selectedFAS = 0
         nodesOutsideSearchDistance = []
@@ -1164,7 +1164,7 @@ class FAS2Deloplande(object):
             elif userquery == "No":
                 for OID in nodesOutsideSearchDistance:
                     OIDs.remove(OID)
-                catchmentForbrug = np.zeros((catchments),dtype=np.float)
+                catchmentForbrug = np.zeros((catchments),dtype=float)
                 arcpy.SelectLayerByAttribute_management(in_layer_or_view=FASFile, selection_type="NEW_SELECTION", where_clause = "FID IN (" + ",".join(OIDs) + ")"  )
                 with arcpy.da.SearchCursor(FASFile, ['SHAPE@',"Forbrug", "taksttype","FID"]) as fascursor:
                     for i, fasrow in enumerate(fascursor):
