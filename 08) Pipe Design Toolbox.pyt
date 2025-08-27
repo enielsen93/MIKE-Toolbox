@@ -131,6 +131,96 @@ def getAvailableFilename(filepath, parent = None):
     else:
         return filepath
 
+def addLayer(layer_source, source, group=None, workspace_type="ACCESS_WORKSPACE", new_name=None,
+             definition_query=None):
+    if arcgis_pro:
+        mxd = arcpy.mp.ArcGISProject("CURRENT")
+        df = mxd.listMaps()[0]
+    else:
+        mxd = arcpy.mapping.MapDocument("CURRENT")
+        df = arcpy.mapping.ListDataFrames(mxd)[0]
+    if arcgis_pro and not ".lyrx" in layer_source and os.path.exists(layer_source.replace(".lyr", ".lyrx")):
+        layer_source = layer_source.replace(".lyr", ".lyrx")
+    if source and ".sqlite" in source:
+        source_layer = arcpymapping.LayerFile(layer_source) if arcgis_pro else arcpy.mapping.Layer(source)
+
+        if group:
+            if arcgis_pro:
+                update_layer = df.addLayerToGroup(group, source_layer, "BOTTOM")
+            else:
+                arcpymapping.AddLayerToGroup(df, group, source_layer, "BOTTOM")
+        else:
+            if arcgis_pro:
+                update_layer = df.addLayer(source_layer, "TOP")
+            else:
+                arcpymapping.AddLayer(df, source_layer, "TOP")
+
+        if not arcgis_pro: update_layer = arcpymapping.listLayers(mxd, source_layer.name, df)[0] if arcgis_pro else \
+            arcpy.mapping.ListLayers(mxd, source_layer.name, df)[0]
+
+        if arcgis_pro:
+            new_connection_properties = update_layer.connectionProperties
+            new_connection_properties["workspace_factory"] = 'Sql'
+            new_connection_properties["connection_info"]["database"] = os.path.dirname(source)
+            update_layer.updateConnectionProperties()
+        else:
+            if ".sqlite" in source:
+                layer = arcpymapping.Layer(layer_source)
+                update_layer.visible = layer.visible
+                update_layer.labelClasses = layer.labelClasses
+                update_layer.showLabels = layer.showLabels
+                update_layer.name = layer.name
+                update_layer.definitionQuery = definition_query
+
+                try:
+                    arcpymapping.UpdateLayer(df, update_layer, layer, symbology_only=True)
+                except Exception as e:
+                    arcpy.AddWarning(source)
+                    pass
+            else:
+                update_layer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))),
+                                               workspace_type, os.path.basename(source))
+
+        try:
+            arcpymapping.UpdateLayer(df, update_layer, layer, symbology_only=True)
+        except Exception as e:
+            arcpy.AddWarning(source)
+            pass
+    else:
+        layer = arcpymapping.LayerFile(layer_source) if arcgis_pro else arcpymapping.Layer(layer_source)
+        if group:
+            if arcgis_pro:
+                df.addLayerToGroup(group, layer, "BOTTOM")
+            else:
+                arcpymapping.AddLayerToGroup(df, group, layer, "BOTTOM")
+        else:
+            if arcgis_pro:
+                df.addLayer(layer, "TOP")
+            else:
+                arcpymapping.AddLayer(df, layer, "TOP")
+        update_layer = df.listLayers(layer.listLayers()[0].name)[0] if arcgis_pro else \
+            arcpymapping.ListLayers(mxd, layer.name, df)[0]
+        if definition_query:
+            update_layer.definitionQuery = definition_query
+        if new_name:
+            update_layer.name = new_name
+
+        if source:
+            if arcgis_pro:
+                # CONFIRMED WORKING FOR SHAPEFILE -> FILEGDB
+                cp = update_layer.connectionProperties
+                if workspace_type == "FILEGDB_WORKSPACE":
+                    workspace_type = "File Geodatabase"
+                arcpy.AddMessage(workspace_type)
+                cp["connection_info"]['database'] = os.path.dirname(
+                    source.replace(r"\mu_Geometry", ""))  # output db path+name
+                cp['dataset'] = os.path.basename(source)
+                cp['workspace_factory'] = workspace_type
+                update_layer.updateConnectionProperties(update_layer.connectionProperties, cp)
+            else:
+                update_layer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))),
+                                               workspace_type, os.path.basename(source))
+    return update_layer
 
 class Config:
     def __init__(self, config_file):
@@ -456,15 +546,15 @@ class PipeDimensionToolTAPro(object):
             df = arcpy.mapping.ListDataFrames(mxd)[0]
 
 
-        def addLayer(layer_source, source, group=None, workspace_type="ACCESS_WORKSPACE"):
-            layer = apmapping.Layer(layer_source)
-            if group:
-                apmapping.AddLayerToGroup(df, group, layer, "BOTTOM")
-            else:
-                apmapping.AddLayer(df, layer, "TOP")
-            updatelayer = apmapping.ListLayers(mxd, layer.name, df)[0]
-            updatelayer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))), workspace_type,
-                                          unicode(os.path.basename(source)))
+        # def addLayer(layer_source, source, group=None, workspace_type="ACCESS_WORKSPACE"):
+        #     layer = arcpymapping.Layer(layer_source)
+        #     if group:
+        #         arcpymapping.AddLayerToGroup(df, group, layer, "BOTTOM")
+        #     else:
+        #         arcpymapping.AddLayer(df, layer, "TOP")
+        #     updatelayer = arcpymapping.ListLayers(mxd, layer.name, df)[0]
+        #     updatelayer.replaceDataSource(unicode(os.path.dirname(source.replace(r"\mu_Geometry", ""))), workspace_type,
+        #                                   unicode(os.path.basename(source)))
 
         is_sqlite = True if ".sqlite" in MU_database else False
 
@@ -2840,7 +2930,24 @@ class DrawLongitudinalProfiles(object):
             direction="Input")
         reference_scale.value = 1500
 
-        parameters = [pipe_layer, result_files, draw_map, pdf_output, overwrite_or_append, backup_tempfile, zoom_level, draw_critical_level, reference_scale]
+        figure_size = arcpy.Parameter(
+            displayName="Figure Size (cm x cm, e.g. 15.7 x 12)",
+            name="figure_size",
+            datatype="GPString",
+            parameterType="Optional",
+            category="Additional Settings",
+            direction="Input")
+        figure_size.value = "Automatic"
+
+        font_size = arcpy.Parameter(
+            displayName="Font Size",
+            name="font_size",
+            datatype="Double",
+            parameterType="Optional",
+            category="Additional Settings",
+            direction="Input")
+
+        parameters = [pipe_layer, result_files, draw_map, pdf_output, overwrite_or_append, backup_tempfile, zoom_level, draw_critical_level, reference_scale, figure_size, font_size]
         return parameters
 
     def isLicensed(self):
@@ -2959,6 +3066,8 @@ class DrawLongitudinalProfiles(object):
         zoom_level = parameters[6].Value
         draw_critical_level = parameters[7].Value
         reference_scale = parameters[8].Value
+        figure_size = parameters[9].Value
+        font_size = parameters[10].Value
 
         if arcgis_pro:
             if result_files:
@@ -2996,6 +3105,7 @@ class DrawLongitudinalProfiles(object):
         # -----------------------
         # User Inputs
         # -----------------------
+        SQLITE_FILE = os.path.dirname(arcpy.Describe(pipe_layers[0]).catalogPath)
         SQLITE_FILE = os.path.dirname(arcpy.Describe(pipe_layers[0]).catalogPath)
         OUTPUT_PDF = output_pdf
 
@@ -3268,11 +3378,16 @@ class DrawLongitudinalProfiles(object):
         # 4) Plot & Save
         # -----------------------
         plt.rcParams['pdf.fonttype'] = 42
+        if font_size:
+            plt.rcParams['font.size'] = font_size
 
         pdf = None
         if output_pdf and "pdf" in output_pdf.lower():
             tmp_pdf = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
             pdf = PdfPages(tmp_pdf)
+
+        if draw_map:
+            map_obj.referenceScale = reference_scale
 
         arcpy.AddMessage(tlog.log("Plotting"))
         arcpy.SetProgressor("step", "Plotting...", 0, len(paths), 1)
@@ -3294,52 +3409,28 @@ class DrawLongitudinalProfiles(object):
             criticallevels = [nodes[muid].critical_level for muid in path]
 
             # Set up Figures
+            if "x" in figure_size:
+                figsize = [float(x.lower().replace("cm", "").strip()) / 2.54 for x in figure_size.split("x")]
+            else:
+                figsize = None
 
             if draw_map:
                 figure_width = max(8, 8 + 0.5 * (chainage[-1]/30 - 2) + 5)
 
                 map_width = 5
-
                 # 1 row, 2 columns → constrained_layout manages spacing
-                fig = plt.figure(figsize=(figure_width, 5), constrained_layout=True
+                fig = plt.figure(figsize=figsize if figsize else (figure_width, 5), constrained_layout=True
                                  )
-                gs = fig.add_gridspec(1, 2, width_ratios=[figure_width-5, map_width])
+                if figsize:
+                    gs = fig.add_gridspec(1, 2, width_ratios=[figsize[0]/3*2, figsize[0]/3*1])
+                else:
+                    gs = fig.add_gridspec(1, 2, width_ratios=[figure_width - 5, map_width])
 
                 ax_plot = fig.add_subplot(gs[0, 0])
                 ax_map = fig.add_subplot(gs[0, 1])
-                # plt.show()
-
-                # fig, ax_plot = plt.subplots(figsize=(figure_width, 5), dpi = 300, constrained_layout=True)
-                # fig_width_in, fig_height_in = fig.get_size_inches()
-                #
-                # # desired map width in inches
-                # map_width_in = 5
-                # map_width_frac = map_width_in / fig_width_in  # fraction of figure width
-                #
-                # # left edge for map axes (stick to right side of figure)
-                # map_left = 1 - map_width_frac
-                #
-                # # add fixed-width map axes
-                # ax_map = fig.add_axes([map_left, 0.1, map_width_frac, 0.8])  # [left, bottom, width, height]
-
-                # Main plot
-                # ax_plot = fig.add_axes([0.05, 0.09, 0.6, 0.84])  # [left, bottom, width, height] in figure fraction
-                # ax_map = fig.add_axes([0.7, 0.1, 0.25, 0.6])  # adjust width/height freely
-                # bbox = ax_map.get_position()  # returns Bbox in figure coordinates
-                # arcpy.AddMessage(bbox)
-                #
-                # fig_width_in, fig_height_in = fig.get_size_inches()
-                # map_width_in = bbox.width * fig_width_in
-                # map_height_in = bbox.height * fig_height_in
-                #
-                # map_aspect = map_width_in / map_height_in  # width / height
-                #
-                # map_width_px = int(math.sqrt(1e6 * map_aspect))
-                # map_height_px = int(1e6 / map_width_px)
-
             else:
                 figure_width = max(8, 8 + 0.5 * (chainage[-1] / 30 - 2))
-                fig, ax_plot = plt.subplots(figsize=(figure_width, 5), dpi=300, constrained_layout=True)
+                fig, ax_plot = plt.subplots(figsize=figsize if figsize else (figure_width, 5), dpi=300, constrained_layout=True)
                 fig.subplots_adjust(left=0.02, right=0.98, top=0.95, bottom=0.09)
                 ax_map = None
 
@@ -3371,7 +3462,7 @@ class DrawLongitudinalProfiles(object):
                 if link.diameter and not np.isnan(link.diameter):
                     ax_plot.text(mid, 0, u'ø{}'.format(int(link.diameter*1e3)),
                         transform=transformer,
-                        ha='center', va='bottom', fontsize=8)
+                        ha='center', va='bottom', fontsize=font_size or 8)
 
             # Draw Manholes
             ax_plot.plot(chainage, groundlevels, 'g-', lw=0.8)
@@ -3411,13 +3502,13 @@ class DrawLongitudinalProfiles(object):
             # Write MUIDs
             y_max = ax_plot.get_ylim()[1]
             for x, n in zip(chainage, path):
-                ax_plot.text(x, y_max, str(n), ha='center', va='top', rotation=90, fontsize=8)
+                ax_plot.text(x, y_max, str(n), ha='center', va='top', rotation=90, fontsize=font_size or 8)
 
 
             # ticks, labels, legend
             ticks = np.arange(0, np.ceil(chainage[-1] / 50) * 50 + 1, 50)
             ax_plot.set_xticks(ticks)
-            ax_plot.set_xticklabels([str(int(t)) for t in ticks], fontsize=8)
+            ax_plot.set_xticklabels([str(int(t)) for t in ticks], fontsize=font_size or 8)
             ax_plot.set_xlabel('Stationering (m)')
             ax_plot.set_ylabel('Kote (m)')
             ax_plot.set_title(u"{} → {}".format(path[0], path[-1]))
@@ -3425,9 +3516,9 @@ class DrawLongitudinalProfiles(object):
             ax_plot.set_xlim(left=-15, right = np.ceil(chainage[-1] / 50) * 50 + 1)   # only changes the left bound
 
             if draw_map:
-                legend = ax_plot.legend(fontsize='small', loc='lower left', bbox_to_anchor=(0, 0), borderaxespad=0)
+                legend = ax_plot.legend(fontsize=font_size or 'small', loc='lower left', bbox_to_anchor=(0, 0), borderaxespad=0)
             else:
-                legend = ax_plot.legend(fontsize='small', loc='lower left', bbox_to_anchor=(0, 0), borderaxespad=0)
+                legend = ax_plot.legend(fontsize=font_size or 'small', loc='lower left', bbox_to_anchor=(0, 0), borderaxespad=0)
             # if False:
             #     # Create square inset map: e.g., 0.22 x 0.22 in figure coords
             #     inset_size = 0.55
