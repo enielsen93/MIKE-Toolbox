@@ -1,15 +1,15 @@
 {
   "type" : "CIMLayerDocument",
-  "version" : "3.2.0",
-  "build" : 49743,
+  "version" : "3.5.0",
+  "build" : 57366,
   "layers" : [
-    "CIMPATH=map/jjv_0325.json"
+    "CIMPATH=Map/JJV_032.json"
   ],
   "layerDefinitions" : [
     {
       "type" : "CIMFeatureLayer",
       "name" : "Brønd",
-      "uRI" : "CIMPATH=map/br_nd6.json",
+      "uRI" : "CIMPATH=Map/Br_nd2.json",
       "sourceModifiedTime" : {
         "type" : "TimeInstant"
       },
@@ -17,7 +17,7 @@
       "useSourceMetadata" : false,
       "layerElevation" : {
         "type" : "CIMLayerElevationSurface",
-        "elevationSurfaceLayerURI" : "CIMPATH=Map/2e57e6a84e7044ac8496e18380e5bcfb.json"
+        "elevationSurfaceLayerURI" : "CIMPATH=Map/581a1ae26e9a4f7bbf867358b2b0df35.json"
       },
       "expanded" : true,
       "layerType" : "Operational",
@@ -41,7 +41,8 @@
           "type" : "CIMTimeTableDefinition"
         },
         "timeDefinition" : {
-          "type" : "CIMTimeDataDefinition"
+          "type" : "CIMTimeDataDefinition",
+          "applyTimeReferenceToAllFields" : false
         },
         "timeDisplayDefinition" : {
           "type" : "CIMTimeDisplayDefinition",
@@ -539,6 +540,7 @@
       "featureCacheType" : "None",
       "displayFiltersType" : "ByScale",
       "featureBlendingMode" : "Alpha",
+      "layerEffectsMode" : "Layer",
       "labelClasses" : [
         {
           "type" : "CIMLabelClass",
@@ -590,7 +592,8 @@
                   "splitAfter" : true
                 }
               ],
-              "trimStackingSeparators" : true
+              "trimStackingSeparators" : true,
+              "preferToStackLongLabels" : true
             },
             "lineFeatureType" : "General",
             "linePlacementMethod" : "OffsetCurvedFromLine",
@@ -871,7 +874,8 @@
                   "splitAfter" : true
                 }
               ],
-              "trimStackingSeparators" : true
+              "trimStackingSeparators" : true,
+              "preferToStackLongLabels" : true
             },
             "lineFeatureType" : "General",
             "linePlacementMethod" : "OffsetCurvedFromLine",
@@ -1152,7 +1156,8 @@
                   "splitAfter" : true
                 }
               ],
-              "trimStackingSeparators" : true
+              "trimStackingSeparators" : true,
+              "preferToStackLongLabels" : true
             },
             "lineFeatureType" : "General",
             "linePlacementMethod" : "OffsetCurvedFromLine",
@@ -1792,6 +1797,7 @@
             ]
           }
         ],
+        "isDefaultSymbolVisible" : true,
         "polygonSymbolColorTarget" : "Fill"
       },
       "scaleSymbols" : true,
@@ -1800,7 +1806,7 @@
     {
       "type" : "CIMFeatureLayer",
       "name" : "Ledning",
-      "uRI" : "CIMPATH=map/ledning6.json",
+      "uRI" : "CIMPATH=Map/Ledning2.json",
       "sourceModifiedTime" : {
         "type" : "TimeInstant"
       },
@@ -1808,7 +1814,7 @@
       "useSourceMetadata" : false,
       "layerElevation" : {
         "type" : "CIMLayerElevationSurface",
-        "elevationSurfaceLayerURI" : "CIMPATH=Map/2e57e6a84e7044ac8496e18380e5bcfb.json"
+        "elevationSurfaceLayerURI" : "CIMPATH=Map/581a1ae26e9a4f7bbf867358b2b0df35.json"
       },
       "expanded" : true,
       "layerType" : "Operational",
@@ -1833,7 +1839,8 @@
         },
         "timeDefinition" : {
           "type" : "CIMTimeDataDefinition",
-          "hasLiveData" : true
+          "hasLiveData" : true,
+          "applyTimeReferenceToAllFields" : false
         },
         "timeDisplayDefinition" : {
           "type" : "CIMTimeDisplayDefinition",
@@ -2365,6 +2372,7 @@
       "featureCacheType" : "None",
       "displayFiltersType" : "ByScale",
       "featureBlendingMode" : "Alpha",
+      "layerEffectsMode" : "Layer",
       "labelClasses" : [
         {
           "type" : "CIMLabelClass",
@@ -2415,7 +2423,8 @@
                   "splitAfter" : true
                 }
               ],
-              "trimStackingSeparators" : true
+              "trimStackingSeparators" : true,
+              "preferToStackLongLabels" : false
             },
             "lineFeatureType" : "General",
             "linePlacementMethod" : "OffsetStraightFromLine",
@@ -3095,6 +3104,7 @@
           }
         ],
         "useDefaultSymbol" : true,
+        "isDefaultSymbolVisible" : true,
         "polygonSymbolColorTarget" : "Fill"
       },
       "scaleSymbols" : true,
@@ -3103,7 +3113,7 @@
     {
       "type" : "CIMFeatureLayer",
       "name" : "Overløb",
-      "uRI" : "CIMPATH=map/overl_b6.json",
+      "uRI" : "CIMPATH=Map/Overl_b2.json",
       "sourceModifiedTime" : {
         "type" : "TimeInstant"
       },
@@ -3111,7 +3121,7 @@
       "useSourceMetadata" : false,
       "layerElevation" : {
         "type" : "CIMLayerElevationSurface",
-        "elevationSurfaceLayerURI" : "CIMPATH=Map/2e57e6a84e7044ac8496e18380e5bcfb.json"
+        "elevationSurfaceLayerURI" : "CIMPATH=Map/581a1ae26e9a4f7bbf867358b2b0df35.json"
       },
       "expanded" : true,
       "layerType" : "Operational",
@@ -3135,7 +3145,8 @@
           "type" : "CIMTimeTableDefinition"
         },
         "timeDefinition" : {
-          "type" : "CIMTimeDataDefinition"
+          "type" : "CIMTimeDataDefinition",
+          "applyTimeReferenceToAllFields" : false
         },
         "timeDisplayDefinition" : {
           "type" : "CIMTimeDisplayDefinition",
@@ -3467,6 +3478,7 @@
       "featureCacheType" : "None",
       "displayFiltersType" : "ByScale",
       "featureBlendingMode" : "Alpha",
+      "layerEffectsMode" : "Layer",
       "labelClasses" : [
         {
           "type" : "CIMLabelClass",
@@ -3517,7 +3529,8 @@
                   "splitAfter" : true
                 }
               ],
-              "trimStackingSeparators" : true
+              "trimStackingSeparators" : true,
+              "preferToStackLongLabels" : false
             },
             "lineFeatureType" : "General",
             "linePlacementMethod" : "OffsetStraightFromLine",
@@ -3977,7 +3990,7 @@
     {
       "type" : "CIMFeatureLayer",
       "name" : "Orifice",
-      "uRI" : "CIMPATH=map/orifice6.json",
+      "uRI" : "CIMPATH=Map/Orifice2.json",
       "sourceModifiedTime" : {
         "type" : "TimeInstant"
       },
@@ -3985,7 +3998,7 @@
       "useSourceMetadata" : false,
       "layerElevation" : {
         "type" : "CIMLayerElevationSurface",
-        "elevationSurfaceLayerURI" : "CIMPATH=Map/2e57e6a84e7044ac8496e18380e5bcfb.json"
+        "elevationSurfaceLayerURI" : "CIMPATH=Map/581a1ae26e9a4f7bbf867358b2b0df35.json"
       },
       "expanded" : true,
       "layerType" : "Operational",
@@ -4009,7 +4022,8 @@
           "type" : "CIMTimeTableDefinition"
         },
         "timeDefinition" : {
-          "type" : "CIMTimeDataDefinition"
+          "type" : "CIMTimeDataDefinition",
+          "applyTimeReferenceToAllFields" : false
         },
         "timeDisplayDefinition" : {
           "type" : "CIMTimeDisplayDefinition",
@@ -4341,10 +4355,11 @@
       "featureCacheType" : "None",
       "displayFiltersType" : "ByScale",
       "featureBlendingMode" : "Alpha",
+      "layerEffectsMode" : "Layer",
       "labelClasses" : [
         {
           "type" : "CIMLabelClass",
-          "expression" : "import math\n\ndef convertToFloat(txt):\n    number = float(txt) if not \",\" in txt else float(txt.replace(\",\", \".\"))\n    return number\n\ndef FindLabel ( [TypeNo] , [InvertLevel] , [Diameter] , [Width] , [Height], [CrsID]    ):\n  label = \"O: %1.2f\" % convertToFloat([InvertLevel] )\n  if [TypeNo] == 'Circular':\n    label += \" %d mm\" % (convertToFloat( [Diameter] )*1e3)\n  elif [TypeNo] == 'CRS':\n    label += \" CRS %s\" % [CrsID] \n  elif [TypeNo] == 'Rectangular':\n    label += \" rekt %dx%d mm\" % ( convertToFloat([Width])*1e3 , convertToFloat([Height])*1e3 )\n  return label ",
+          "expression" : "import math\r\n\r\ndef convertToFloat(txt):\r\n    number = float(txt) if not \",\" in txt else float(txt.replace(\",\", \".\"))\r\n    return number\r\n\r\ndef FindLabel ( [TypeNo] , [InvertLevel] , [Diameter] , [Width] , [Height], [CrsID]    ):\r\n  label = \"O: %1.2f\" % convertToFloat([InvertLevel] )\r\n  if [TypeNo] == 'Circular' or [TypeNo] == '1':\r\n    label += \" %d mm\" % (convertToFloat( [Diameter] )*1e3)\r\n  elif [TypeNo] == 'CRS' or [TypeNo] == '2':\r\n    label += \" CRS %s\" % [CrsID] \r\n  elif [TypeNo] == 'Rectangular' or [TypeNo] == '3':\r\n    label += \" rekt %dx%d mm\" % ( convertToFloat([Width])*1e3 , convertToFloat([Height])*1e3 )\r\n  return label ",
           "expressionEngine" : "Python",
           "featuresToLabel" : "AllVisibleFeatures",
           "maplexLabelPlacementProperties" : {
@@ -4391,7 +4406,8 @@
                   "splitAfter" : true
                 }
               ],
-              "trimStackingSeparators" : true
+              "trimStackingSeparators" : true,
+              "preferToStackLongLabels" : false
             },
             "lineFeatureType" : "General",
             "linePlacementMethod" : "OffsetStraightFromLine",
@@ -4722,7 +4738,7 @@
     {
       "type" : "CIMFeatureLayer",
       "name" : "Pumpe",
-      "uRI" : "CIMPATH=map/pumpe6.json",
+      "uRI" : "CIMPATH=Map/Pumpe2.json",
       "sourceModifiedTime" : {
         "type" : "TimeInstant"
       },
@@ -4730,7 +4746,7 @@
       "useSourceMetadata" : false,
       "layerElevation" : {
         "type" : "CIMLayerElevationSurface",
-        "elevationSurfaceLayerURI" : "CIMPATH=Map/2e57e6a84e7044ac8496e18380e5bcfb.json"
+        "elevationSurfaceLayerURI" : "CIMPATH=Map/581a1ae26e9a4f7bbf867358b2b0df35.json"
       },
       "expanded" : true,
       "layerType" : "Operational",
@@ -4754,7 +4770,8 @@
           "type" : "CIMTimeTableDefinition"
         },
         "timeDefinition" : {
-          "type" : "CIMTimeDataDefinition"
+          "type" : "CIMTimeDataDefinition",
+          "applyTimeReferenceToAllFields" : false
         },
         "timeDisplayDefinition" : {
           "type" : "CIMTimeDisplayDefinition",
@@ -5110,6 +5127,7 @@
       "featureCacheType" : "None",
       "displayFiltersType" : "ByScale",
       "featureBlendingMode" : "Alpha",
+      "layerEffectsMode" : "Layer",
       "labelClasses" : [
         {
           "type" : "CIMLabelClass",
@@ -5160,7 +5178,8 @@
                   "splitAfter" : true
                 }
               ],
-              "trimStackingSeparators" : true
+              "trimStackingSeparators" : true,
+              "preferToStackLongLabels" : false
             },
             "lineFeatureType" : "General",
             "linePlacementMethod" : "OffsetStraightFromLine",
@@ -5455,7 +5474,7 @@
     {
       "type" : "CIMFeatureLayer",
       "name" : "msm_CatchConLink",
-      "uRI" : "CIMPATH=map/msm_catchconlink6.json",
+      "uRI" : "CIMPATH=Map/msm_CatchConLink2.json",
       "sourceModifiedTime" : {
         "type" : "TimeInstant"
       },
@@ -5463,7 +5482,7 @@
       "useSourceMetadata" : false,
       "layerElevation" : {
         "type" : "CIMLayerElevationSurface",
-        "elevationSurfaceLayerURI" : "CIMPATH=Map/2e57e6a84e7044ac8496e18380e5bcfb.json"
+        "elevationSurfaceLayerURI" : "CIMPATH=Map/581a1ae26e9a4f7bbf867358b2b0df35.json"
       },
       "expanded" : true,
       "layerType" : "Operational",
@@ -5699,7 +5718,8 @@
           "type" : "CIMTimeTableDefinition"
         },
         "timeDefinition" : {
-          "type" : "CIMTimeDataDefinition"
+          "type" : "CIMTimeDataDefinition",
+          "applyTimeReferenceToAllFields" : false
         },
         "timeDisplayDefinition" : {
           "type" : "CIMTimeDisplayDefinition",
@@ -5728,6 +5748,7 @@
       "featureCacheType" : "None",
       "displayFiltersType" : "ByScale",
       "featureBlendingMode" : "Alpha",
+      "layerEffectsMode" : "Layer",
       "labelClasses" : [
         {
           "type" : "CIMLabelClass",
@@ -5778,7 +5799,8 @@
                   "splitAfter" : true
                 }
               ],
-              "trimStackingSeparators" : true
+              "trimStackingSeparators" : true,
+              "preferToStackLongLabels" : false
             },
             "lineFeatureType" : "General",
             "linePlacementMethod" : "OffsetStraightFromLine",
@@ -6071,7 +6093,7 @@
     {
       "type" : "CIMFeatureLayer",
       "name" : "Delopland",
-      "uRI" : "CIMPATH=map/delopland6.json",
+      "uRI" : "CIMPATH=Map/Delopland2.json",
       "sourceModifiedTime" : {
         "type" : "TimeInstant"
       },
@@ -6079,7 +6101,7 @@
       "useSourceMetadata" : false,
       "layerElevation" : {
         "type" : "CIMLayerElevationSurface",
-        "elevationSurfaceLayerURI" : "CIMPATH=Map/2e57e6a84e7044ac8496e18380e5bcfb.json"
+        "elevationSurfaceLayerURI" : "CIMPATH=Map/581a1ae26e9a4f7bbf867358b2b0df35.json"
       },
       "expanded" : true,
       "layerType" : "Operational",
@@ -6103,7 +6125,8 @@
           "type" : "CIMTimeTableDefinition"
         },
         "timeDefinition" : {
-          "type" : "CIMTimeDataDefinition"
+          "type" : "CIMTimeDataDefinition",
+          "applyTimeReferenceToAllFields" : false
         },
         "timeDisplayDefinition" : {
           "type" : "CIMTimeDisplayDefinition",
@@ -7132,6 +7155,7 @@
       "featureCacheType" : "None",
       "displayFiltersType" : "ByScale",
       "featureBlendingMode" : "Alpha",
+      "layerEffectsMode" : "Layer",
       "labelClasses" : [
         {
           "type" : "CIMLabelClass",
@@ -7183,7 +7207,8 @@
                   "splitAfter" : true
                 }
               ],
-              "trimStackingSeparators" : true
+              "trimStackingSeparators" : true,
+              "preferToStackLongLabels" : true
             },
             "lineFeatureType" : "General",
             "linePlacementMethod" : "OffsetCurvedFromLine",
@@ -7454,7 +7479,7 @@
     {
       "type" : "CIMGroupLayer",
       "name" : "JJV_032",
-      "uRI" : "CIMPATH=map/jjv_0325.json",
+      "uRI" : "CIMPATH=Map/JJV_032.json",
       "sourceModifiedTime" : {
         "type" : "TimeInstant"
       },
@@ -7462,7 +7487,7 @@
       "useSourceMetadata" : true,
       "layerElevation" : {
         "type" : "CIMLayerElevationSurface",
-        "elevationSurfaceLayerURI" : "CIMPATH=Map/2e57e6a84e7044ac8496e18380e5bcfb.json"
+        "elevationSurfaceLayerURI" : "CIMPATH=Map/581a1ae26e9a4f7bbf867358b2b0df35.json"
       },
       "expanded" : true,
       "layerType" : "Operational",
@@ -7478,13 +7503,13 @@
       "allowDrapingOnIntegratedMesh" : true,
       "sublayerVisibilityMode" : "Independent",
       "layers" : [
-        "CIMPATH=map/br_nd6.json",
-        "CIMPATH=map/ledning6.json",
-        "CIMPATH=map/overl_b6.json",
-        "CIMPATH=map/orifice6.json",
-        "CIMPATH=map/pumpe6.json",
-        "CIMPATH=map/msm_catchconlink6.json",
-        "CIMPATH=map/delopland6.json"
+        "CIMPATH=Map/Br_nd2.json",
+        "CIMPATH=Map/Ledning2.json",
+        "CIMPATH=Map/Overl_b2.json",
+        "CIMPATH=Map/Orifice2.json",
+        "CIMPATH=Map/Pumpe2.json",
+        "CIMPATH=Map/msm_CatchConLink2.json",
+        "CIMPATH=Map/Delopland2.json"
       ]
     }
   ],
@@ -7536,10 +7561,28 @@
     {
       "type" : "CIMElevationSurfaceLayer",
       "name" : "Ground",
-      "uRI" : "CIMPATH=Map/2e57e6a84e7044ac8496e18380e5bcfb.json",
+      "uRI" : "CIMPATH=Map/581a1ae26e9a4f7bbf867358b2b0df35.json",
+      "sourceModifiedTime" : {
+        "type" : "TimeInstant"
+      },
       "useSourceMetadata" : true,
       "description" : "Ground",
       "expanded" : true,
+      "layer3DProperties" : {
+        "type" : "CIM3DLayerProperties",
+        "castShadows" : true,
+        "isLayerLit" : true,
+        "layerFaceCulling" : "None",
+        "preloadTextureCutoffHigh" : 0.29999999999999999,
+        "preloadTextureCutoffLow" : 0.59999999999999998,
+        "textureCutoffHigh" : 0.29999999999999999,
+        "textureCutoffLow" : 0.59999999999999998,
+        "useCompressedTextures" : true,
+        "verticalExaggeration" : 1,
+        "exaggerationMode" : "ScaleZ",
+        "lighting" : "OneSideDataNormal",
+        "optimizeMarkerTransparency" : true
+      },
       "layerType" : "Operational",
       "showLegends" : false,
       "visibility" : true,

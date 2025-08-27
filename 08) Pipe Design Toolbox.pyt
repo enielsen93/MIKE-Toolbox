@@ -3182,7 +3182,7 @@ class DrawLongitudinalProfiles(object):
             "diameter",
             "UpLevel",
             "DwLevel",
-            "SHAPE@"
+            "SHAPE@",
         ]
 
         links = {}
@@ -3218,7 +3218,7 @@ class DrawLongitudinalProfiles(object):
                                 diameter=diam,
                                 uplevel=up,
                                 dwlevel=dw,
-                                geometry=shape
+                                geometry=shape,
                             )
                             link.length = link.length if link.length else shape.length
                             links[muid] = link
@@ -3301,7 +3301,14 @@ class DrawLongitudinalProfiles(object):
         # 2) Read Scenarios
         # -----------------------
         arcpy.AddMessage(tlog.log("Reading Result Files"))
-        scenario_data = {}
+        scenarios = []
+
+        class Scenario:
+            def __init__(self, name, filepath):
+                self.name = name
+                self.filepath = filepath
+                self.data = []
+
         if result_files and arcgis_pro:
             class Pipe:
                 def __init__(self, muid, start_node, end_node):
@@ -3313,7 +3320,7 @@ class DrawLongitudinalProfiles(object):
 
             for f in result_files:
                 name = os.path.basename(os.path.splitext(f)[0]).replace("Base","").replace("Result_file","")
-                scenario_data[name] = []
+                scenario = Scenario(name, f)
                 res1d_reaches = Res1D(f).network.reaches
 
                 links_fixed = links_selected.copy()
@@ -3340,9 +3347,10 @@ class DrawLongitudinalProfiles(object):
 
                             pipe_result.water_level_start = query_result.iloc[0]
                             pipe_result.water_level_end = query_result.iloc[1]
-                            scenario_data[name].append(pipe_result)
+                            scenario.data.append(pipe_result)
                         except Exception as e:
                             pass
+                scenarios.append(scenario)
 
         arcpy.AddMessage(tlog.log("Graphing"))
         # -----------------------
@@ -3478,7 +3486,7 @@ class DrawLongitudinalProfiles(object):
             cmap = plt.cm.get_cmap('tab10' if arcgis_pro else "Set1")
 
             # Draw results
-            for idx, (result_name, pipe_result) in enumerate(scenario_data.items()):
+            for idx, scenario in enumerate(scenarios):
                 # Create a new list where the first and last elements of `chain` remain unchanged,
                 # but each middle element is replaced by two elements adjusted by ±half on their value.
                 # For example, if chain elements are numbers, each middle element c is replaced by (c - half) and (c + half).
@@ -3488,7 +3496,7 @@ class DrawLongitudinalProfiles(object):
                 link_water_level = []
                 for fromnodeid, tonodeid in zip(path, path[1:]):
                     water_level = next(
-                        ((pipe.water_level_start, pipe.water_level_end) for pipe in pipe_result
+                        ((pipe.water_level_start, pipe.water_level_end) for pipe in scenario.data
                          if pipe.start_node == fromnodeid and pipe.end_node == tonodeid),
                         None
                     )
@@ -3497,7 +3505,7 @@ class DrawLongitudinalProfiles(object):
                     else:
                         link_water_level.extend([np.nan, np.nan])
 
-                ax_plot.plot(modified_chainage, link_water_level, '--', lw = 0.8, color=cmap(idx), label=result_name)
+                ax_plot.plot(modified_chainage, link_water_level, '--', lw = 0.8, color=cmap(idx), label=scenario.name)
 
             # Write MUIDs
             y_max = ax_plot.get_ylim()[1]

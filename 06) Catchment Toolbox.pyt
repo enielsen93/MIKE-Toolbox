@@ -2165,7 +2165,31 @@ class CatchmentSlopeAnalysis(object):
 
         arcpy.SetProgressor("default", "Graphing MIKE Database")
         # graphing MU_database
-        import mikegraph
+        try:
+            # Try local package inside toolbox folder
+            local_pkg_path = os.path.join(os.path.dirname(__file__), "Data")
+            if os.path.isdir(local_pkg_path):
+                local_used = True
+                sys.path.insert(0, local_pkg_path)
+            else:
+                local_used = False
+            import mikegraph
+            from mikegraph import TimeAreaAnalyzer
+            from mikegraph import PipeNetwork
+        except ImportError as e:
+            raise ImportError(
+                "The 'mikegraph' package is required but not installed.\n"
+                "Checked local folder: {0} -> {1}\n\n"
+                "You can install it by running:\n"
+                "   python -m pip install https://github.com/enielsen93/mikegraph/tarball/master\n\n"
+                "where python is the path to your ArcGIS python.exe\n\n"
+                "Original error:\n{2}".format(
+                    local_pkg_path,
+                    "FOUND" if local_used else "NOT FOUND",
+                    str(e)
+                )
+            )
+
         graph = mikegraph.MikeNetwork(MU_database)
         graph.map_network()
 
