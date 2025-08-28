@@ -712,7 +712,7 @@ class PipeDimensionToolTAPro(object):
                             else:
                                 D = diameters_plastic if not "concrete" in row[1].lower() and not "beton" in row[
                                     1].lower() else diameters_concrete
-                            slope = slopeOverwrite if slopeOverwrite else row[0] * 1e-2
+                            slope = slopeOverwrite if slopeOverwrite is not None else (row[0] * 1e-2 if row[0] is not None else 10e-3)
                             # if writeDischargeInstead:
                             #     diameter = # ins_row = (row[4], row[3], peak_discharge[msm_Link_Network.links[row[3]].fromnode], row[2], row[0], row[5], row[6])
                             #     ins_cursor.insertRow(ins_row)
