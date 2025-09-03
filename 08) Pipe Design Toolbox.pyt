@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+
+# TO DO Networkx
 """
 Created on Mon Jul 30 11:21:31 2018
 
@@ -2874,7 +2876,8 @@ class DrawLongitudinalProfiles(object):
             datatype="File",
             parameterType="Optional",
             direction="Output")
-        pdf_output.filter.list = ["pdf", "png", "svg", "jpg"]
+        if arcgis_pro:
+            pdf_output.filter.list = ["pdf", "png", "svg", "jpg"]
 
         default_name = "Longitudinal Profiles.pdf"
         default_path = os.path.join(arcpy.env.scratchFolder, default_name)
@@ -2912,15 +2915,6 @@ class DrawLongitudinalProfiles(object):
         )
         zoom_level.value = 1.5
 
-        draw_critical_level = arcpy.Parameter(
-            displayName="Draw Critical Level",
-            name="draw_critical_level",
-            datatype="Boolean",
-            parameterType="optional",
-            category = "Additional Settings",
-            direction="Input")
-        draw_critical_level.value = True
-
         reference_scale = arcpy.Parameter(
             displayName="Reference Scale of Map",
             name="reference_scale",
@@ -2935,7 +2929,7 @@ class DrawLongitudinalProfiles(object):
             name="figure_size",
             datatype="GPString",
             parameterType="Optional",
-            category="Additional Settings",
+            category="Plot Settings",
             direction="Input")
         figure_size.value = "Automatic"
 
@@ -2944,10 +2938,38 @@ class DrawLongitudinalProfiles(object):
             name="font_size",
             datatype="Double",
             parameterType="Optional",
-            category="Additional Settings",
+            category="Plot Settings",
             direction="Input")
 
-        parameters = [pipe_layer, result_files, draw_map, pdf_output, overwrite_or_append, backup_tempfile, zoom_level, draw_critical_level, reference_scale, figure_size, font_size]
+        elements_to_display = arcpy.Parameter(
+            displayName="Display the following elements on the Profile:",
+            name="elements_to_display",
+            datatype="GPString",
+            parameterType="Optional",
+            multiValue=True,
+            category="Plot Settings",
+            direction="Input")
+        elements_to_display.filter.type = "ValueList"
+        elements_to_display.filter.list = [
+            "Profile ID",
+            "Legend",
+            "Chainage",
+            "Elevation",
+            "Manhole ID",
+            "Diameter",
+            "Critical level"
+        ]
+        elements_to_display.value = [
+            "Profile ID",
+            "Legend",
+            "Chainage",
+            "Elevation",
+            "Manhole ID",
+            "Diameter",
+            "Critical level"
+            ]
+
+        parameters = [pipe_layer, result_files, draw_map, pdf_output, overwrite_or_append, backup_tempfile, zoom_level, reference_scale, figure_size, font_size, elements_to_display]
         return parameters
 
     def isLicensed(self):
@@ -2959,7 +2981,7 @@ class DrawLongitudinalProfiles(object):
         overwrite_or_append = parameters[4]
         backup_tempfile = parameters[5]
         zoom_level = parameters[6]
-        reference_scale = parameters[8]
+        reference_scale = parameters[7]
         if arcgis_pro:
             # Reference the active map in the current project
             aprx = arcpymapping.ArcGISProject("CURRENT")
@@ -3064,10 +3086,11 @@ class DrawLongitudinalProfiles(object):
 
         backup_tempfile = parameters[5].Value
         zoom_level = parameters[6].Value
-        draw_critical_level = parameters[7].Value
-        reference_scale = parameters[8].Value
-        figure_size = parameters[9].Value
-        font_size = parameters[10].Value
+        reference_scale = parameters[7].Value
+        figure_size = parameters[8].Value
+        font_size = parameters[9].Value
+        elements_to_display = [f.replace("'", "").lower() for f in parameters[10].ValueAsText.split(";")] if parameters[
+            10].ValueAsText else None
 
         if arcgis_pro:
             if result_files:
@@ -3417,7 +3440,7 @@ class DrawLongitudinalProfiles(object):
             criticallevels = [nodes[muid].critical_level for muid in path]
 
             # Set up Figures
-            if "x" in figure_size:
+            if figure_size and "x" in figure_size:
                 figsize = [float(x.lower().replace("cm", "").strip()) / 2.54 for x in figure_size.split("x")]
             else:
                 figsize = None
@@ -3467,7 +3490,7 @@ class DrawLongitudinalProfiles(object):
                 # diameter label at bottom of main axes
                 mid = 0.5 * (chainage_0_adj + chainage_1_adj)
                 transformer = transforms.blended_transform_factory(ax_plot.transData, ax_plot.transAxes)
-                if link.diameter and not np.isnan(link.diameter):
+                if "diameter" in elements_to_display and link.diameter and not np.isnan(link.diameter):
                     ax_plot.text(mid, 0, u'ø{}'.format(int(link.diameter*1e3)),
                         transform=transformer,
                         ha='center', va='bottom', fontsize=font_size or 8)
@@ -3479,7 +3502,7 @@ class DrawLongitudinalProfiles(object):
                 if groundlevel and invertlevel:
                     rect = Rectangle((x - manhole_width/2, invertlevel), manhole_width, groundlevel - invertlevel, fill=False, edgecolor='black', lw=1.0)
                     ax_plot.add_patch(rect)
-                    if draw_critical_level and criticallevel:
+                    if "critical level" in elements_to_display and criticallevel:
                         ax_plot.plot([x - manhole_width/2, x + manhole_width/2], [criticallevel, criticallevel], 'r-', lw=1.0, label = "Kritisk Kote" if not skip_critical_level_label else None)
                         skip_critical_level_label = True
 
@@ -3509,24 +3532,34 @@ class DrawLongitudinalProfiles(object):
 
             # Write MUIDs
             y_max = ax_plot.get_ylim()[1]
-            for x, n in zip(chainage, path):
-                ax_plot.text(x, y_max, str(n), ha='center', va='top', rotation=90, fontsize=font_size or 8)
+            if "manhole id" in elements_to_display:
+                for x, n in zip(chainage, path):
+                    ax_plot.text(x, y_max, str(n), ha='center', va='top', rotation=90, fontsize=font_size or 8)
 
 
             # ticks, labels, legend
             ticks = np.arange(0, np.ceil(chainage[-1] / 50) * 50 + 1, 50)
             ax_plot.set_xticks(ticks)
             ax_plot.set_xticklabels([str(int(t)) for t in ticks], fontsize=font_size or 8)
-            ax_plot.set_xlabel('Stationering (m)')
-            ax_plot.set_ylabel('Kote (m)')
-            ax_plot.set_title(u"{} → {}".format(path[0], path[-1]))
+            if "chainage" in elements_to_display:
+                ax_plot.set_xlabel('Stationering (m)')
+            else:
+                ax_plot.tick_params(axis="x", which="both", labelbottom=False)
+
+            if "elevation" in elements_to_display:
+                ax_plot.set_ylabel('Kote (m)')
+                ax_plot.tick_params(axis="y", which="both", labelbottom=False)
+
+            if "profile id" in elements_to_display:
+                ax_plot.set_title(u"{} → {}".format(path[0], path[-1]))
             ax_plot.grid(True, linestyle='--', lw=0.5)
             ax_plot.set_xlim(left=-15, right = np.ceil(chainage[-1] / 50) * 50 + 1)   # only changes the left bound
 
-            if draw_map:
-                legend = ax_plot.legend(fontsize=font_size or 'small', loc='lower left', bbox_to_anchor=(0, 0), borderaxespad=0)
-            else:
-                legend = ax_plot.legend(fontsize=font_size or 'small', loc='lower left', bbox_to_anchor=(0, 0), borderaxespad=0)
+            if "legend" in elements_to_display:
+                if draw_map:
+                    legend = ax_plot.legend(fontsize=font_size or 'small', loc='lower left', bbox_to_anchor=(0, 0.05), borderaxespad=0)
+                else:
+                    legend = ax_plot.legend(fontsize=font_size or 'small', loc='lower left', bbox_to_anchor=(0, 0.05), borderaxespad=0)
             # if False:
             #     # Create square inset map: e.g., 0.22 x 0.22 in figure coords
             #     inset_size = 0.55
@@ -3663,9 +3696,10 @@ class DrawLongitudinalProfiles(object):
         if OUTPUT_PDF:
             os.startfile(os.path.dirname(OUTPUT_PDF))  # Opens folder in Explorer
         #
-        for pipe_layer in pipe_layers:
-            pipe_layer_references[pipe_layer.longName].setSelectionSet(list(selection_sets[pipe_layer.longName]))
-        map_obj.referenceScale = old_scale
+        if draw_map:
+            for pipe_layer in pipe_layers:
+                pipe_layer_references[pipe_layer.longName].setSelectionSet(list(selection_sets[pipe_layer.longName]))
+            map_obj.referenceScale = old_scale
 
 
         return
