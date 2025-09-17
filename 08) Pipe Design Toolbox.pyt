@@ -3118,8 +3118,10 @@ class DrawLongitudinalProfiles(object):
                 if lyr.name == pipe_layer.name and lyr.getSelectionSet():
                     pipe_layer_references[pipe_layer.longName] = lyr
                     break
-
-            selection_sets[pipe_layer.longName] = pipe_layer_references[pipe_layer.longName].getSelectionSet()
+            try:
+                selection_sets[pipe_layer.longName] = pipe_layer_references[pipe_layer.longName].getSelectionSet()
+            except Exception as e:
+                arcpy.AddWarning(str(e))
 
         links_selected = []
         for pipe_layer in pipe_layers:
@@ -3698,7 +3700,10 @@ class DrawLongitudinalProfiles(object):
         #
         if draw_map:
             for pipe_layer in pipe_layers:
-                pipe_layer_references[pipe_layer.longName].setSelectionSet(list(selection_sets[pipe_layer.longName]))
+                try:
+                    pipe_layer_references[pipe_layer.longName].setSelectionSet(list(selection_sets[pipe_layer.longName]))
+                except Exception as e:
+                    arcpy.AddWarning(str(e))
             map_obj.referenceScale = old_scale
 
 
