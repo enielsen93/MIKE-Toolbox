@@ -8,7 +8,7 @@ import os
 import arcpy
 import numpy as np
 import re
-import pythonaddins
+# import pythonaddins
 import hashlib
 import math
 import sys

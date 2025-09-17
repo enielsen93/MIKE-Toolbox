@@ -2848,7 +2848,7 @@ class DrawLongitudinalProfiles(object):
             name="pipe_layer",
             multiValue=True,
             datatype="GPFeatureLayer",
-            parameterType="Optional",
+            parameterType="Required",
             direction="Input")
 
         result_files = arcpy.Parameter(
@@ -2856,7 +2856,7 @@ class DrawLongitudinalProfiles(object):
             name="result_files",
             datatype="File",
             multiValue=True,
-            parameterType="optional",
+            parameterType="Required",
             direction="Input")
         result_files.filter.list = ["res1d"]
 

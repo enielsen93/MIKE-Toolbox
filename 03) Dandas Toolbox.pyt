@@ -1141,21 +1141,29 @@ class CopyMikeUrbanFeatures(object):
         arcpy.env.overwriteOutput = True
         nodes_count, links_count, catchments_count = (0,0,0)
         import random
+        from_mike = False
         if msm_Node:
             nodes_in_msm_Node = [row[0] for row in arcpy.da.SearchCursor(msm_Node, ["MUID"])]
             nodes_count = len(nodes_in_msm_Node)
+            if ".sqlite" in arcpy.Describe(msm_Node).catalogPath:
+                from_mike = True
 
         if msm_Link:
             links_in_msm_Link = [row[0] for row in arcpy.da.SearchCursor(msm_Link, ["MUID"])]
             links_count = len(links_in_msm_Link)
+            if ".sqlite" in arcpy.Describe(msm_Link).catalogPath:
+                from_mike = True
 
         if ms_Catchment:
             catchments_in_ms_Catchment = [row[0] for row in arcpy.da.SearchCursor(ms_Catchment, ["MUID"])]
             catchments_count = len(catchments_in_ms_Catchment)
+            if ".sqlite" in arcpy.Describe(ms_Catchment).catalogPath:
+                from_mike = True
 
         if is_sqlite:
             arcpy.AddMessage("SQLITE database. Using XML file in MIKE+ for import.")
-            with open(os.path.dirname(os.path.realpath(__file__)) + r"\Data\XML\DDS_to_MIKE+.xml", 'r') as f:
+
+            with open(os.path.dirname(os.path.realpath(__file__)) + r"\Data\XML\%s.xml" % ("MIKE+_to_MIKE+" if from_mike else "DDS_to_MIKE+"), 'r') as f:
                 xml_txt = f.readlines()
 
                 # Pattern: find the correct <TablePropertyValue ...> with property="TransferMode"
@@ -1189,7 +1197,7 @@ class CopyMikeUrbanFeatures(object):
                     if is_sqlite:
                         if arcgis_pro:
                             response = confirm_assignment("The following manholes are already in the MIKE+ Database: %s" % ", ".join(
-                                    duplicate_nodes), 1, "Confirm?")
+                                    duplicate_nodes), "Confirm Node Transfer", "Confirm?")
                         else:
                             response = pythonaddins.MessageBox(
                                 "The following manholes are already in the MIKE+ Database: %s" % ", ".join(
@@ -1198,7 +1206,7 @@ class CopyMikeUrbanFeatures(object):
                             return
                     else:
                         if arcgis_pro:
-                            confirm_assignment("The following manholes are already in the Mike Urban Database: %s. Would you like to continue?" % ", ".join(duplicate_nodes), 1)
+                            confirm_assignment("The following manholes are already in the Mike Urban Database: %s. Would you like to continue?" % ", ".join(duplicate_nodes), "Confirm node transfer?")
                         else:
                             response = pythonaddins.MessageBox("The following manholes are already in the Mike Urban Database: %s" % ", ".join(duplicate_nodes)
                                                            + " Would you like to remove the existing manholes first? (No: The tool will add those duplicate manholes anyway."

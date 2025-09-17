@@ -187,8 +187,8 @@ class CompareMikeModels(object):
             parameterType="Optional",
             multiValue=True,
             direction="Input")
-        ignore_fields.filter.list = ["OBJECTID", "SHAPE", "Slope", "UpLevel_C", "DwLevel_C", "Length_C", "UpLevel", "DwLevel", "Diameter", "NetTypeNo", "GroundLevel", "InvertLevel", "CriticalLevel", "Area", "Description", "AssetName", "Fricno"]
-        ignore_fields.value = ["OBJECTID", "Slope", "UpLevel_C", "DwLevel_C", "Length_C", "CriticalLevel", "Area"]
+        ignore_fields.filter.list = ["OBJECTID", "SHAPE", "Slope", "UpLevel_C", "DwLevel_C", "Length_C", "UpLevel", "DwLevel", "Diameter", "NetTypeNo", "GroundLevel", "InvertLevel", "CriticalLevel", "Area", "Description", "AssetName", "Fricno", "routingtypeno", "routingdelay", "routingshape", "description", "geometry"]
+        ignore_fields.value = ["OBJECTID", "Slope", "UpLevel_C", "DwLevel_C", "Length_C", "CriticalLevel", "Area", "routingtypeno", "routingdelay", "routingshape"]
         #ignore_fields.value = ["msm_Catchment", "msm_Node", "msm_Link", "msm_Weir", "msm_Orifice"]
 
         parameters = [database1, database2, check_features, ignore_fields]

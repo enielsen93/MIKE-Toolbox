@@ -996,12 +996,20 @@ class ExportToDDS(object):
             name="write_labels",
             datatype="GPBoolean",
             parameterType="Optional",
-            category="Additonal Settings",
+            category="Additional Settings",
             direction="Input"
         )
         write_labels.value = True
 
-        parameters = [msm_Node, msm_Link, dandas_knuder, dandas_ledninger, dandas_deloplande, use_pipe_catalogue, use_thickness, write_labels]
+        existing_where_clause = arcpy.Parameter(
+            displayName="SQL WHERE clause defining existing elements (all others will be treated as planned)",
+            name="existing_where_clause",
+            datatype="GPString",
+            parameterType="Optional",
+            category="Additional Settings",
+            direction="Input"
+        )
+        parameters = [msm_Node, msm_Link, dandas_knuder, dandas_ledninger, dandas_deloplande, use_pipe_catalogue, use_thickness, write_labels, existing_where_clause]
 
         return parameters
 
@@ -1052,6 +1060,8 @@ class ExportToDDS(object):
         use_pipe_catalogue = parameters[5].Value
         use_thickness = parameters[6].Value
         write_labels = parameters[7].Value
+        existing_where_clause = parameters[8].ValueAsText
+
 
         pipe_catalogue = []
         class PipeSize:
@@ -1100,6 +1110,7 @@ class ExportToDDS(object):
                 self.net_type_no = 2
                 self.description = ""
                 self.shape = None
+                self.existing = False
 
         outer_diameters_plastic = np.array([0.110, 0.160, 0.200, 0.250, 0.300, 0.400, 0.500, 0.600, 0.800, 0.900, 1.000, 1.200,
                                    1.400, 1.500, 1.600])
@@ -1116,11 +1127,16 @@ class ExportToDDS(object):
                 self.net_type_no = 2
                 self.description = ""
                 self.element_s = None
+                self.existing = False
+                self.typeno = 1
+                self.height = None
+                self.width = None
 
-            def outer_diameter(self, pipe_catalogue):
+            def outer_diameter(self):
                 if self.material_id == "Plastic":# and self.diameter not in outer_diameters_plastic and self.diameter < 1.6:
-                    wall_thickness = self.wall_thickness(pipe_catalogue)
-                    return self.diameter*1e3 + (wall_thickness if wall_thickness else 0)*2
+                    # wall_thickness = self.wall_thickness(pipe_catalogue)/
+                    return outer_diameters_plastic[np.searchsorted(outer_diameters_plastic, self.diameter, side="left")]*1e3
+                    # return self.diameter*1e3 + (wall_thickness if wall_thickness else 0)*2*
                     # i = np.where(outer_diameters_plastic - self.diameter >= 0)[0][0]
                     # return outer_diameters_plastic[i]
                 else:
@@ -1158,6 +1174,16 @@ class ExportToDDS(object):
                         return None
                 else:
                     return None
+
+            def cross_section_code(self):
+                if link.typeno == 1: #Circular
+                    return 1
+                elif link.typeno == 3: #Rectangular
+                    return 4
+                elif link.typeno == 2: # CRS
+                    return 50
+                else: # Fallback
+                    return 1
 
         catchments_dict = {}
         if True:
@@ -1231,6 +1257,10 @@ class ExportToDDS(object):
                         catchments_dict[row[0]].nettypeno = row[4]
                         catchments_dict[row[0]].shape = row[5]
 
+        nodes_existing = set([row[0] for row in arcpy.da.SearchCursor(msm_Node, ["MUID"], where_clause = existing_where_clause)])
+        links_existing = set([row[0] for row in
+                          arcpy.da.SearchCursor(msm_Link, ["MUID"], where_clause=existing_where_clause)])
+
         with arcpy.da.SearchCursor(msm_Node,
                                    ["MUID", "SHAPE@XY", "Diameter", "TypeNo", "InvertLevel", "GroundLevel", "NetTypeNo",
                                     "Description"]) as cursor:
@@ -1244,11 +1274,13 @@ class ExportToDDS(object):
                     if row[5]: node.ground_level = row[5]
                     if row[6]: node.net_type_no = row[6]
                     if row[7]: node.description = row[7]
+                    if row[0] in nodes_existing: node.existing = True
+
 
         if msm_Link:
             with arcpy.da.SearchCursor(msm_Link,
                                        ["MUID", "SHAPE@", "Diameter", "MaterialID", "UpLevel", "DwLevel", "NetTypeNo",
-                                        "Description", "Element_S"]) as cursor:
+                                        "Description", "Element_S", "TypeNo", "Height", "Width", "CRSID"]) as cursor:
                 for row in cursor:
                     links[row[0]] = Link(row[0], row[1])
                     link = links[row[0]]
@@ -1259,6 +1291,17 @@ class ExportToDDS(object):
                     if row[6] and row[6] in [1,2,3]: link.net_type_no = row[6]
                     if row[7]: link.description = row[7]
                     if row[8]: link.element_s = row[8]
+                    if row[0] in links_existing: link.existing = True
+                    if row[9]: link.typeno = row[9]
+                    if link.typeno == 3: # Rectangular
+                        link.diameter = None
+                        if row[10]: link.height = row[10]
+                        if row[11]: link.width = row[11]
+                    elif link.typeno == 2: # CRS
+                        link.diameter = None
+                        if row[12]: link.description = row[12] + " " + link.description
+
+
 
         for node in nodes.values():
             node_dds = ET.SubElement(node_root, "Knude")
@@ -1267,13 +1310,17 @@ class ExportToDDS(object):
             ET.SubElement(node_dds, "DiameterBredde").text = "%d" % (node.diameter * 1e3)
             ET.SubElement(node_dds, "KategoriAfloebKode").text = "1"
             ET.SubElement(node_dds, "KnudeKode").text = "1"
-            ET.SubElement(node_dds, "Bemaerkning").text = node.description
+            if node.description: ET.SubElement(node_dds, "Bemaerkning").text = node.description
             ET.SubElement(node_dds, "Terraenkote").text = "%1.2f" % node.ground_level
             ET.SubElement(node_dds, "TypeAfloebKode").text = "%d" % node.net_type_no
             ET.SubElement(node_dds, "XKoordinat").text = "%1.2f" % node.x
             ET.SubElement(node_dds, "YKoordinat").text = "%1.2f" % node.y
+            if node.existing:
+                ET.SubElement(node_dds, "StatusKode").text = "1"
+            else:
+                ET.SubElement(node_dds, "StatusKode").text = "6"
 
-            label_offset = [5, 5] if node.net_type_no == 2 else [-10, 5]
+            label_offset = [7, 7] if node.net_type_no == 2 else [-12, 7]
             if write_labels:
                 ET.SubElement(node_dds, "XLabel").text = "%1.2f" % (node.x + label_offset[0])
                 ET.SubElement(node_dds, "YLabel").text = "%1.2f" % (node.y + label_offset[1])
@@ -1319,11 +1366,12 @@ class ExportToDDS(object):
                     ET.SubElement(link_dds, "TransportKode").text = "1"
                     ET.SubElement(link_dds, "TypeAfloebKode").text = "%d" % link.net_type_no
 
-                    if link.element_s == 11: #projekteret
-                        ET.SubElement(link_dds, "StatusKode").text = "6"
-                    elif link.element_s == 3 or link.element_s == 7: #eksisterende
+                    if link.existing:
                         ET.SubElement(link_dds, "StatusKode").text = "1"
+                    else:
+                        ET.SubElement(link_dds, "StatusKode").text = "6"
 
+                    if link.description: ET.SubElement(link_dds, "Bemaerkning").text = link.description
                     link_dds_parts = ET.SubElement(link_dds, 'DelLedningItems')
                     link_dds_part = ET.SubElement(link_dds_parts, 'DelLedning')
                     link_dds_part.set("NedstroemKnudenavn", network.links[link.muid].tonode)
@@ -1338,11 +1386,22 @@ class ExportToDDS(object):
                                       'BundloebskoteNedst').text = "%1.2f" % link.dwlevel if link.dwlevel else "%1.2f" % nodes[
                             network.links[link.muid].tonode].invert_level
                     ET.SubElement(link_dds_part, "MaterialeKode").text = "%d" % link.material_code
-                    ET.SubElement(link_dds_part, 'Handelsmaal').text = "%d" % (link.outer_diameter(pipe_catalogue))
-                    ET.SubElement(link_dds_part, 'DiameterIndv').text = "%d" % (link.diameter * 1e3)
-                    wall_thickness = link.wall_thickness(pipe_catalogue)
-                    if wall_thickness:
-                        ET.SubElement(link_dds_part, 'Godstykkelse').text = "%1.1f" % wall_thickness
+                    if not link.typeno or link.typeno == 1:
+                        ET.SubElement(link_dds_part, 'Handelsmaal').text = "%d" % (link.outer_diameter())
+                        ET.SubElement(link_dds_part, 'DiameterIndv').text = "%d" % (link.diameter * 1e3)
+                        wall_thickness = link.wall_thickness(pipe_catalogue)
+                        if wall_thickness:
+                            ET.SubElement(link_dds_part, 'Godstykkelse').text = "%1.1f" % wall_thickness
+                    elif link.typeno == 3:
+                        ET.SubElement(link_dds_part, "DiameterIndv").text = "%d" % (link.width*1e3)
+                        ET.SubElement(link_dds_part, "HoejdeIndv").text = "%d" % (link.height*1e3)
+                        ET.SubElement(link_dds_part, "Handelsmaal").text = "%d" % (link.height * 1e3)
+                    elif link.typeno == 2:
+                        pass # writes profile in description
+
+
+                    ET.SubElement(link_dds_part, "TvaersnitKode").text = "%d" % link.cross_section_code()
+
 
                     if len(link.shape.getPart()[0]) > 2:
                         bends = ET.SubElement(link_dds_part, 'KnaekpunktItems')

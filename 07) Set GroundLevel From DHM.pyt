@@ -151,6 +151,7 @@ class GetTerrainElevation(object):
         OID_field = arcpy.Describe(point_layer).OIDFieldName if not is_sqlite_database else "muid"
         point_layer_OIDs = [row[0] for row in arcpy.da.SearchCursor(point_layer, OID_field)]
 
+
         if not is_sqlite_database:
             edit = arcpy.da.Editor(os.path.dirname(os.path.dirname(arcpy.Describe(point_layer).catalogPath)))
             edit.startEditing(False, True)

@@ -561,7 +561,7 @@ def readRes1D(res1d_file, MU_model = None, gdb_path = None, filter_to_extent = N
                         full_discharge = reach.QFull
                         if reach.max_discharge < full_discharge:
                             water_level = bisect(bretting, 0, reach.diameter,
-                                                 args=(reach.max_discharge, full_discharge, reach.diameter), xtol=0.002,
+                                                 args=(max(1e-3,reach.max_discharge), full_discharge, reach.diameter), xtol=0.002,
                                                  maxiter=100)
                             radius = reach.diameter / 2
                             theta = 2 * math.acos((radius - water_level) / radius)
@@ -747,7 +747,7 @@ class Toolbox(object):
 
         # List of tool classes associated with this toolbox
         if arcgis_pro:
-            self.tools = [DisplayMIKE1DResults, ReadMIKE1DResults, PlotRes1D]
+            self.tools = [DisplayMIKE1DResults, ReadMIKE1DResults, PlotRes1D, PlotRes1DLTS]
         else:
             self.tools = [DisplayFloodReturnPeriodFun, DisplayWeirStatistics, DisplayFlowStatistics, DisplayQFullQMax, DisplayWeirReturnPeriod, DisplayMIKE1DResults, DisplayExtent]
 class DisplayFloodReturnPeriodFun(object):
@@ -2105,7 +2105,11 @@ class DisplayMIKE1DResults(object):
             parameterType="Optional",
             multiValue=True,
             direction="Input")
-        display_type.filter.list = ["Flood Volume", "Flood Depth", "Max Elevation / Headloss", "Surcharge Balance", "Peak Discharge", "Link Depth Difference", "Total Discharge"]
+        if arcgis_pro:
+            display_type.filter.list = [arcgis_pro, "Flood Volume", "Flood Depth", "Max Elevation / Headloss", "Surcharge Balance", "Peak Discharge", "Link Depth Difference", "Total Discharge", "Shear Stress"]
+        else:
+            display_type.filter.list = [arcgis_pro, "Flood Volume", "Flood Depth", "Max Elevation / Headloss", "Surcharge Balance",
+                                        "Peak Discharge", "Link Depth Difference", "Total Discharge"]
         display_type.value = ["Flood Volume", "Peak Discharge"]
 
         # res1d_filepath  = arcpy.Parameter(
@@ -2365,6 +2369,12 @@ class DisplayMIKE1DResults(object):
                                  workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE",
                                  new_name=os.path.basename(reaches_featureclass).replace(".shp", ""))
                 layer.showLabels = True
+            if "shear stress" in display_type.lower():
+                layer = addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_links_shearstress.lyr",
+                                 reaches_featureclass.replace(".shp", ""), group=empty_group_layer,
+                                 workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE",
+                                 new_name=os.path.basename(reaches_featureclass).replace(".shp", ""))
+                layer.showLabels = False
         if not arcgis_pro:
             arcpy.RefreshTOC()
         # def addLayer(layer_source, source):
@@ -2622,7 +2632,11 @@ class ReadMIKE1DResults(object):
             parameterType="Optional",
             multiValue=True,
             direction="Input")
-        display_type.filter.list = ["Flood Volume", "Flood Depth", "Max Elevation / Headloss", "Surcharge Balance", "Peak Discharge", "Link Depth Difference", "Total Discharge"]
+        if arcgis_pro:
+            display_type.filter.list = ["Flood Volume", "Flood Depth", "Max Elevation / Headloss", "Surcharge Balance", "Peak Discharge", "Link Depth Difference", "Total Discharge", "Bed Shear Stress"]
+        else:
+            display_type.filter.list = ["Flood Volume", "Flood Depth", "Max Elevation / Headloss", "Surcharge Balance",
+                                        "Peak Discharge", "Link Depth Difference", "Total Discharge"]
         display_type.value = ["Flood Volume", "Peak Discharge"]
 
         display_results = arcpy.Parameter(
@@ -2895,6 +2909,13 @@ class ReadMIKE1DResults(object):
                                          workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE",
                                          new_name=os.path.basename(reaches_featureclass).replace(".shp", ""))
                         layer.showLabels = True
+                    if "shear stress" in display_type.lower():
+                        layer = addLayer(
+                            os.path.dirname(os.path.realpath(__file__)) + "\Data\MIKE1D_results_links_shearstress.lyr",
+                            reaches_featureclass.replace(".shp", ""), group=empty_group_layer,
+                            workspace_type="SHAPEFILE_WORKSPACE" if "shp" in reaches_featureclass else "FILEGDB_WORKSPACE",
+                            new_name=os.path.basename(reaches_featureclass).replace(".shp", ""))
+                        layer.showLabels = False
                 if not arcgis_pro:
                     arcpy.RefreshTOC()
             # def addLayer(layer_source, source):
@@ -2985,7 +3006,16 @@ class PlotRes1D(object):
             direction="Input"
         )
         font_size.value = 7.0  # Default value
-        font_size.category = "Additional Settings"
+        font_size.category = "Plot Settings"
+
+        LTS_duration = arcpy.Parameter(
+            displayName="Duration of LTS (if relevant). ",
+            name="LTS_duration",
+            datatype="Double",
+            parameterType="Optional",
+            direction="Input"
+        )
+
 
         parameters = [manhole_layer, pipe_layer, result_files, stop_updating, date_filter, step_every, font_size]
         return parameters
@@ -3298,3 +3328,290 @@ class PlotRes1D(object):
         # time.sleep(10)
 
 
+class PlotRes1DLTS(object):
+    def __init__(self):
+        self.label = "2) Plot Res1D Extreme Statistics"
+        self.description = "2) Plot Res1D Extreme Statistics"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        # Define parameter definitions
+
+        manhole_layer = arcpy.Parameter(
+            displayName="Manhole feature layer",
+            name="manhole_layer",
+            datatype="GPFeatureLayer",
+            parameterType="Optional",
+            direction="Input")
+        manhole_layer.filter.list = ["Point"]
+
+        pipe_layer = arcpy.Parameter(
+            displayName="Pipe feature layer",
+            name="pipe_layer",
+            datatype="GPFeatureLayer",
+            parameterType="Optional",
+            direction="Input")
+
+        result_files = arcpy.Parameter(
+            displayName="RES1D Extreme Statistics",
+            name="result_files",
+            datatype="File",
+            multiValue=True,
+            parameterType="optional",
+            direction="Input")
+        result_files.filter.list = ["res1d"]
+
+        stop_updating = arcpy.Parameter(
+            displayName="Stop Updating Parameters",
+            name="stop_updating",
+            datatype="Boolean",
+            parameterType="Derived",  # It's not an input!
+            direction="Output"
+        )
+        stop_updating.enabled = False  # Hides it from the UI
+
+        font_size = arcpy.Parameter(
+            displayName="Font Size",
+            name="font_size",
+            datatype="GPDouble",
+            parameterType="Required",
+            direction="Input"
+        )
+        font_size.value = 7.0  # Default value
+        font_size.category = "Plot Settings"
+
+        LTS_duration = arcpy.Parameter(
+            displayName="Duration of LTS",
+            name="LTS_duration",
+            datatype="Double",
+            parameterType="Optional",
+            direction="Input"
+        )
+
+        parameters = [manhole_layer, pipe_layer, result_files, stop_updating, font_size, LTS_duration]
+        return parameters
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        if not parameters[3].Value:
+            parameters[3].Value = True
+            if arcgis_pro:
+                # Reference the active map in the current project
+                aprx = arcpymapping.ArcGISProject("CURRENT")
+                map_view = aprx.activeMap
+
+                # List layers with selected features
+                layers = None
+                for layer in map_view.listLayers():
+                    try:
+                        if layer.getSelectionSet() and arcpy.Describe(layer).shapeType == "Point":
+                            layers = layer.longName
+                            break
+                    except:
+                        pass
+            else:
+                mxd = arcpy.mapping.MapDocument("CURRENT")
+                df = arcpy.mapping.ListDataFrames(mxd)[0]
+                layers = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
+                          lyr.getSelectionSet() if lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Point'][
+                    0]
+
+            if layers and not parameters[0].ValueAsText and not parameters[0].altered:
+                parameters[0].value = layers
+
+            if arcgis_pro:
+                # Reference the active map in the current project
+                aprx = arcpymapping.ArcGISProject("CURRENT")
+                map_view = aprx.activeMap
+
+                # List layers with selected features
+                layers = None
+                for layer in map_view.listLayers():
+                    try:
+                        if layer.getSelectionSet() and arcpy.Describe(layer).shapeType == "Polyline":
+                            layers = layer.longName
+                            break
+                    except:
+                        pass
+            else:
+                mxd = arcpy.mapping.MapDocument("CURRENT")
+                df = arcpy.mapping.ListDataFrames(mxd)[0]
+                layers = [lyr.longName for lyr in arcpy.mapping.ListLayers(mxd) if
+                          lyr.getSelectionSet() if
+                          lyr.getSelectionSet() and arcpy.Describe(lyr).shapeType == 'Polyline'][0]
+
+            if layers and not parameters[1].ValueAsText:
+                parameters[1].value = layers
+            for parameter in [parameters[0], parameters[1]]:
+                if parameter.ValueAsText:
+                    if not parameters[2].value and ".gdb" in parameter.value.dataSource:
+                        metadata_filepath = os.path.join(os.path.dirname(parameter.value.dataSource), "metadata")
+                        # parameters[1].Value = [metadata_filepath]
+                        if arcpy.Exists(metadata_filepath):
+                            res1d_filepath = \
+                            [row[0] for row in arcpy.da.SearchCursor(metadata_filepath, ["res1d_path"])][0]
+                            if arcpy.Exists(res1d_filepath):
+                                parameters[2].Value = [res1d_filepath]
+
+        return
+
+    def updateMessages(self, parameters):  # optional
+
+        return
+
+    def execute(self, parameters, messages):
+        manhole_layer = parameters[0].ValueAsText
+        pipe_layer = parameters[1].ValueAsText
+        font_size = parameters[4].Value
+        lts_duration = parameters[5].Value
+
+
+        result_files = [f.replace("'", "") for f in parameters[2].ValueAsText.split(";")] if parameters[
+            2].ValueAsText else None
+
+        libs = import_or_install(["mikeio1d"])
+        mikeio1d = libs["mikeio1d"]
+        res1d = mikeio1d.res1d
+        Res1D = res1d.Res1D
+        QueryDataNode = res1d.QueryDataNode
+        QueryDataReach = res1d.QueryDataReach
+        QueryDataStructure = res1d.QueryDataStructure
+
+        manholes_selected = []
+        pipes_selected = []
+        if manhole_layer:
+            manholes_selected = [row[0] for row in arcpy.da.SearchCursor(manhole_layer, ["MUID"])]
+
+        if pipe_layer:
+            pipes_selected = [row[0] for row in arcpy.da.SearchCursor(pipe_layer, ["MUID"])]
+
+        import matplotlib
+        matplotlib.use("TkAgg")
+        import matplotlib.pyplot as plt
+        # Parameters
+        subplots_count = 2 if manholes_selected and pipes_selected else 1
+        fig_width_cm = 15.7  # Total figure width in centimeters
+        fig_width_in = fig_width_cm / 2.54  # Convert to inches
+        aspect_ratio = subplots_count  # Adjust for desired height (e.g., 0.6 for landscape-like)
+
+        # Calculate figure height based on aspect ratio and number of rows (1 row here)
+        fig_height_in = fig_width_in * aspect_ratio
+
+        # Create subplots
+        fig, axs = plt.subplots(subplots_count, 1, figsize=(fig_width_in, fig_height_in), dpi=300, sharex=True)
+
+        # If only one subplot, make axs iterable
+        if subplots_count == 1:
+            axs = [axs]
+
+        manhole_queries = {muid: QueryDataNode("WaterLevelMaximum", muid, 0) for muid in manholes_selected}
+        pipe_queries = {muid: QueryDataReach("DischargeIntegrated", muid, 0) for muid in pipes_selected}
+        queries = {**manhole_queries, **pipe_queries}
+
+        arcpy.SetProgressor("default", "Reading res1d")
+
+        cmap = plt.cm.get_cmap('tab10' if arcgis_pro else "Set1")
+        linestyles = ['-', '--', '-.', ':',
+                      (0, (1, 1)),
+                      (0, (5, 5)),
+                      (0, (3, 5, 1, 5)),
+                      (0, (3, 1, 1, 1))]
+
+        plt.rcParams.update({'font.size': float(font_size)})
+        plt.rcParams['font.family'] = 'Verdana'
+        plt.rcParams['svg.fonttype'] = 'none'
+
+        arcpy.AddMessage(font_size)
+        import matplotlib.dates as dates
+
+        for result_file_i, result_file in enumerate(result_files):
+            if ".res1d" in result_file:
+                res1d = Res1D(result_file)
+                try:
+                    result_df = res1d.read([queries[key] for key in queries])
+                except Exception as e:
+                    import pandas as pd
+                    arcpy.AddWarning(e)
+                    dfs = []
+                    for query in queries:
+                        try:
+                            dfs.append(res1d.read(queries[query]))
+                        except:
+                            pass
+                    result_df = pd.concat(dfs, axis=1)
+
+                columns = result_df.columns
+                # arcpy.AddMessage(queries)
+                col_i_WL = 0
+                col_i_D = 0
+
+                discharge_row = 1 if manholes_selected else 0
+                axs[0].set_ylabel("Stuvningsniveau [m]")
+                if pipes_selected:
+                    axs[discharge_row].set_ylabel(u"Vandføring [m³]")
+
+                arcpy.SetProgressor("step", "Processing queries...", 0, len(columns), 1)
+
+                linestyle = linestyles[result_file_i % len(linestyles)]
+
+                i = 0
+                for col in columns:
+                    arcpy.SetProgressorLabel(f"Plotting result {i}/{len(columns)}")
+                    arcpy.SetProgressorPosition(i)
+                    i += 1
+
+                    if len(result_files) > 1:
+                        label = "%s (%s)" % (
+                        col.split(":")[1], os.path.basename(result_file).replace("Base", "").replace(".res1d", ""))
+                    else:
+                        label = "%s" % (col.split(":")[1])
+
+                    y = result_df[col].values
+                    ranks = np.arange(1, len(y) + 1)
+                    return_periods = lts_duration / ranks
+                    x = return_periods
+
+                    arcpy.AddMessage(col)
+                    if "waterlevel" in col.split(":")[0].lower():
+                        axs[0].plot(x, y, label=label, color=cmap(col_i_WL % 10), linestyle=linestyle, linewidth=0.8)
+                        col_i_WL += 1
+
+                    if "discharge" in col.split(":")[0].lower():
+                        axs[discharge_row].plot(x, y, label=label, color=cmap(col_i_D % 10), linestyle=linestyle,
+                                                linewidth=0.8)
+                        col_i_D += 1
+                        arcpy.AddMessage(col_i_D)
+
+        arcpy.SetProgressor("default", "Showing Plot")
+
+        for subplot_i in range(subplots_count):
+            if len(queries) < 9:
+                axs[subplot_i].legend()
+            locator = dates.AutoDateLocator(interval_multiples=True)
+            axs[subplot_i].xaxis.set_major_locator(locator)
+
+            def y_formatter(x, pos):
+                # Format float with max 3 significant digits, no scientific notation
+                # Use format specifier '.3f' but strip trailing zeros smartly
+                s = f"{x:.3f}".rstrip('0').rstrip('.')
+                # For very small numbers close to zero, just show 0
+                if s == '-0':
+                    s = '0'
+                return s
+
+            axs[subplot_i].yaxis.set_major_formatter(FuncFormatter(y_formatter))
+            axs[subplot_i].yaxis.set_major_locator(MaxNLocator(nbins=6))  # max 6 ticks on y-axis
+
+            for label in axs[subplot_i].get_xticklabels():
+                label.set_rotation(45)
+                label.set_horizontalalignment('right')
+
+            axs[subplot_i].grid(which='major', linestyle='--', alpha=0.7)
+
+        # axs[1].legend()
+        plt.tight_layout()
+        fig.autofmt_xdate()
+        plt.show()
+        # time.sleep(10)

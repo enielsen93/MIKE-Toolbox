@@ -137,7 +137,10 @@ class SetDefinitionQuery(object):
                     existing_query = lbl_class.SQLQuery.strip()
 
                     if existing_query and append:
-                        lbl_class.SQLQuery = "{} OR {}".format(existing_query, definition_query)
+                        if remove_selection:
+                            lbl_class.SQLQuery = "{} AND {}".format(existing_query, definition_query)
+                        else:
+                            lbl_class.SQLQuery = "{} OR {}".format(existing_query, definition_query)
                     else:
                         lbl_class.SQLQuery = definition_query
                     arcpy.AddMessage(definition_query)
@@ -155,7 +158,6 @@ class SetDefinitionQuery(object):
 
                     if "muid" in [field.name.lower() for field in arcpy.ListFields(layer)] and (
                             hasattr(layer, "datasetName") and "CatchConLink" not in layer.datasetName):
-                        arcpy.AddMessage((layer.getSelectionSet()))
                         new_definition_query = "muid %sIN ('%s')" % ("NOT " if remove_selection else "", "', '".join(
                             [row[0] for row in arcpy.da.SearchCursor(layer, ["muid"], where_clause="%s IN (%s)" % (
                             oid_fieldname, ", ".join([str(l) for l in layer.getSelectionSet()])))]))

@@ -209,8 +209,8 @@ class GetImperviousnessSPV(object):
         showWarnings = parameters[2].Value
         OPL_name = parameters[3].ValueAsText
 
-        mxd = arcpy.mapping.MapDocument("CURRENT")
-        df = arcpy.mapping.ListDataFrames(mxd)[0]
+        # mxd = arcpy.mapping.MapDocument("CURRENT")
+        # df = arcpy.mapping.ListDataFrames(mxd)[0]
         arcpy.env.addOutputsToMap = False
         ms_Catchment = arcpy.CopyFeatures_management(CatchmentLayer, getAvailableFilename(arcpy.env.scratchGDB + "\ms_CatchmentImp", parent = MU_database))[0] if MU_database != "not_available" else CatchmentLayer
         # if not includeWasteWater:
