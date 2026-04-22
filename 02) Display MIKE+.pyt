@@ -22,6 +22,15 @@ from collections import namedtuple
 import warnings
 import shutil
 
+# Cumtrapz changed name in scipy, so this handles this
+try:
+    # Try the old name first (for SciPy <1.14)
+    from scipy.integrate import cumtrapz
+except ImportError:
+    # For SciPy >=1.14, use the new name
+    from scipy.integrate import cumulative_trapezoid as cumtrapz
+
+
 def getAvailableFilename(filepath, parent = None):
     parent = "F%s" % (parent) if parent and parent[0].isdigit() else None
     parent = os.path.basename(re.sub(r"\.[^\.\\]+$","", parent)).replace(".","_").replace("-","_").replace(" ","_").replace(",","_") if parent else None
@@ -524,11 +533,11 @@ class DisplaySqliteStep1(object):
                 surface_areas = np.interp(elevations, np.sort(self.elevations), surface_areas)
                 if self.permanent_level:
                     return np.interp(level, elevations,
-                                     [0] + list(scipy.integrate.cumtrapz(surface_areas, elevations))) - np.interp(
+                                     [0] + list(cumtrapz(surface_areas, elevations))) - np.interp(
                         self.permanent_level, elevations,
-                        [0] + list(scipy.integrate.cumtrapz(surface_areas, elevations)))
+                        [0] + list(cumtrapz(surface_areas, elevations)))
                 else:
-                    return np.interp(level, elevations, [0] + list(scipy.integrate.cumtrapz(surface_areas, elevations)))
+                    return np.interp(level, elevations, [0] + list(cumtrapz(surface_areas, elevations)))
 
         if "Basins" in features_to_display:
             basins = {}
@@ -662,6 +671,7 @@ class DisplaySqliteStep1(object):
                                             row[5], min(basin.max_volume, basin.get_volume(row[5])))
 
                                     row[4] = description[:220]
+                                    arcpy.AddMessage(description)
                                     # cursor.updateRow(row)
                                 except Exception as e:
                                     arcpy.AddWarning("Error: Could not calculate volume of basin %s" % (row[0]))
@@ -1744,11 +1754,11 @@ class DisplaySqlitePro(object):
                     surface_areas = np.interp(elevations, np.sort(self.elevations), surface_areas)
                     if self.permanent_level:
                         return np.interp(level, elevations,
-                                         [0] + list(scipy.integrate.cumtrapz(surface_areas, elevations))) - np.interp(
+                                         [0] + list(cumtrapz(surface_areas, elevations))) - np.interp(
                             self.permanent_level, elevations,
-                            [0] + list(scipy.integrate.cumtrapz(surface_areas, elevations)))
+                            [0] + list(cumtrapz(surface_areas, elevations)))
                     else:
-                        return np.interp(level, elevations, [0] + list(scipy.integrate.cumtrapz(surface_areas, elevations)))
+                        return np.interp(level, elevations, [0] + list(cumtrapz(surface_areas, elevations)))
 
             if "Basins" in features_to_display:
                 basins = {}
