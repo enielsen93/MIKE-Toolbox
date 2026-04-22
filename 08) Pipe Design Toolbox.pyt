@@ -13,7 +13,7 @@ import re
 import hashlib
 import math
 import sys
-import networkx as nx
+# import networkx as nx
 import pandas as pd
 import traceback
 import datetime
@@ -340,7 +340,7 @@ class PipeDimensionToolTAPro(object):
         scaling_factor = arcpy.Parameter(
 			displayName= "Scaling Factor for Rain Event",
 			name="scaling_factor",
-			datatype="GPString",
+			datatype="double",
 			parameterType="Required",
 			direction="Input")
         scaling_factor.value = "1"
@@ -1211,7 +1211,10 @@ class upgradeDimensions(object):
 
         MUIDs = [row[0] for row in arcpy.da.SearchCursor(pipe_layer,["MUID"])]
         if len(MUIDs) == len([row[0] for row in arcpy.da.SearchCursor(arcpy.Describe(pipe_layer).CatalogPath,["MUID"])]):
-            userquery = pythonaddins.MessageBox("Change dimension of %d pipes?" % (len(MUIDs)), "Confirm Assignment", 4)
+            if arcgis_pro:
+                userquery = confirm_assignment("Change dimension of %d pipes" % (len(MUIDs)), "Confirm Assignment", 4)
+            else:
+                userquery = pythonaddins.MessageBox("Change dimension of %d pipes?" % (len(MUIDs)), "Confirm Assignment", 4)
             if not userquery == "Yes":
                 return
 
@@ -1229,13 +1232,13 @@ class upgradeDimensions(object):
                             D = diameters_plastic if not "concrete" in row[2].lower() and not "beton" in row[
                                 2].lower() else diameters_concrete
                         D = np.array(D)
-                        oldDiameter = row[1] * 1e3
-                        diameter = D[np.where(row[1] * 1e3 < D)[0][0]] / 1e3
+                        oldDiameter = row[1] if row[1] else 0
+                        diameter = D[np.where(oldDiameter * 1e3 < D)[0][0]] / 1e3
                         material = row[2]
                         if change_material:
                             material = "Concrete (Normal)" if diameter > 0.45 else "Plastic"
                         update_cursor.execute("UPDATE msm_Link SET Diameter = %1.3f, MaterialID = '%s' WHERE MUID = '%s'" % (diameter, material, row[0]))
-                        arcpy.AddMessage("Upgraded pipe %s from %d to %d" % (row[0], oldDiameter, diameter*1e3))
+                        arcpy.AddMessage("Upgraded pipe %s from %d to %d" % (row[0], oldDiameter*1e3, diameter*1e3))
                 connection.commit()
         else:
             edit = arcpy.da.Editor(os.path.dirname(os.path.dirname(arcpy.Describe(pipe_layer).catalogPath)))
@@ -1333,7 +1336,11 @@ class downgradeDimensions(object):
 
         MUIDs = [row[0] for row in arcpy.da.SearchCursor(pipe_layer,["MUID"])]
         if len(MUIDs) == len([row[0] for row in arcpy.da.SearchCursor(arcpy.Describe(pipe_layer).CatalogPath,["MUID"])]):
-            userquery = pythonaddins.MessageBox("Change dimension of %d pipes?" % (len(MUIDs)), "Confirm Assignment", 4)
+            if arcgis_pro:
+                userquery = confirm_assignment("Change dimension of %d pieps" % (len(MUIDs)), "Confirm Assignment", 4)
+            else:
+                userquery = pythonaddins.MessageBox("Change dimension of %d pipes?" % (len(MUIDs)),
+                                                    "Confirm Assignment", 4)
             if not userquery == "Yes":
                 return
 
@@ -1426,13 +1433,29 @@ class CopyDiameter(object):
             name="match_by",
             datatype="GPString",
             parameterType="Required",
-            multiValue=True,
             direction="Input")
         match_by.filter.type = "ValueList"
-        match_by.filter.list = ["SHAPE@", "OBJECTID", "MUID", "FROMNODE-TONODE"]
-        match_by.value = "SHAPE@"
+        match_by.filter.list = ["SHAPE@", "OBJECTID", "MUID", "FROMNODE-TONODE", "NEAREST"]
+        match_by.value = "MUID"
 
-        parameters = [reference_feature_layer, target_feature_layer, copy_field, match_by]
+        invert_level_assignment = arcpy.Parameter(
+            displayName="Invert level offset",
+            name="invert_level_assignment",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Input")
+        invert_level_assignment.value = "None"
+        invert_level_assignment.filter.list = ["None", "Subtract 40 cm", "Subtract 40 cm and wall thickness", r"Subtract difference in Pipe Diameter / 2"]
+
+        max_distance = arcpy.Parameter(
+            displayName="Max Distance for matching features",
+            name="max_distance",
+            datatype="GPDouble",
+            parameterType="Optional",
+            direction="Input")
+        max_distance.value = 10
+
+        parameters = [reference_feature_layer, target_feature_layer, copy_field, match_by, invert_level_assignment, max_distance]
         return parameters
 
     def isLicensed(self):
@@ -1443,6 +1466,18 @@ class CopyDiameter(object):
         target_feature_layer = parameters[1].Value
         copy_field = parameters[2].ValueAsText
         match_by = parameters[3].ValueAsText
+        invert_level_assignment = parameters[4]
+        max_distance = parameters[5]
+
+        if copy_field and "invertlevel" in [field.lower() for field in copy_field.split(";")]:
+            invert_level_assignment.enabled = True
+        else:
+            invert_level_assignment.enabled = False
+
+        if match_by.lower() == "nearest":
+            max_distance.enabled = True
+        else:
+            max_distance.enabled = False
     
         def changeShapeFieldname(fields):
                 for i in range(len(fields)):
@@ -1480,8 +1515,20 @@ class CopyDiameter(object):
         MU_database = os.path.dirname(arcpy.Describe(target_feature_layer).catalogPath).replace("mu_Geometry","").replace("!delete!","")
         reference_MU_database = os.path.dirname(arcpy.Describe(reference_feature_layer).catalogPath).replace("mu_Geometry","").replace("!delete!","")
         target_MU_database = os.path.dirname(arcpy.Describe(target_feature_layer).catalogPath).replace("mu_Geometry",
-                                                                                                          "").replace("!delete!","")
-        
+                                                                                           "").replace("!delete!","")
+        invert_level_assignment = parameters[4].ValueAsText
+        max_distance = parameters[5].Value
+
+        pipe_catalogue = pd.DataFrame({
+            "Material": ["Concrete"] * 11,
+            "Intern_dia": [300, 400, 500, 600, 700, 800, 900, 1000, 1200, 1400, 1600],
+            "Thick_side": [54, 72, 62, 71, 82, 94, 105, 116, 138, 165, 188],
+            "Thick_top": [54, 72, 116, 110, 128, 146, 164, 183, 219, 256, 290],
+            "Thick_bot": [54, 72, 141, 169, 197, 225, 253, 281, 338, 394, 450],
+            "Total_wid": [408, 544, 624, 742, 864, 988, 1110, 1232, 1476, 1730, 1976],
+            "Total_hei": [408, 544, 757, 879, 1025, 1171, 1317, 1464, 1757, 2050, 2340]
+        })
+
         # arcpy.AddMessage(MU_database)
         
         is_sqlite = True if ".sqlite" in MU_database else False
@@ -1494,58 +1541,25 @@ class CopyDiameter(object):
                 arcpy.AddError("Match field %s is not supported for sqlite" % (match_by))
         
         field_for_where_clause = "objectid" if not is_sqlite else "muid"
-        check_other_layer = True
         arcpy.AddMessage("Confirm Query - Might be hidden behind window!")
-        try:
-            if arcpy.Describe(reference_feature_layer).fidSet:
-                count = int(arcpy.GetCount_management(reference_feature_layer).getOutput(0))
-                if arcgis_pro:
-                    userquery = confirm_assignment(
-                        "Change for %d features (selected in reference layer)?" % (count), "Confirm Assignment", 4)
-                else:
-                    userquery = pythonaddins.MessageBox("Change for %d features (selected in reference layer)?" % (count), "Confirm Assignment", 4)
-                if not userquery == "Yes":
-                    pass
-                else:
-                    if field_for_where_clause.lower() == "MUID".lower():
-                        reference_where_clause = "%s IN ('%s')" % (field_for_where_clause, "', '".join([str(row[0]) for row in arcpy.da.SearchCursor(reference_feature_layer, [field_for_where_clause])])) 
-                    else:
-                        reference_where_clause = "%s IN (%s)" % (field_for_where_clause, ", ".join([str(row[0]) for row in arcpy.da.SearchCursor(reference_feature_layer, [field_for_where_clause])])) 
-                    target_where_clause = ""
-                    check_other_layer = False
-        except Exception as e:
-            arcpy.AddError(e)
-            pass
-       
-        # arcpy.AddMessage((check_other_layer and arcpy.Describe(target_feature_layer).fidSet))
-        try:
-            if check_other_layer and arcpy.Describe(target_feature_layer).fidSet:
-                count = int(arcpy.GetCount_management(target_feature_layer).getOutput(0))
-                if arcgis_pro:
-                    userquery = confirm_assignment("Change for %d features (selected in target layer)?" % (count),
-                                                   "Confirm Assignment", 4)
-                else:
-                    userquery = pythonaddins.MessageBox("Change for %d features (selected in target layer)?" % (count), "Confirm Assignment", 4)
-                if not userquery == "Yes": 
-                    arcpy.AddMessage("Cancelled both user queries")
-                    return
-                else:
-                    if field_for_where_clause.lower() == "MUID".lower():
-                        target_where_clause = "%s IN ('%s')" % (field_for_where_clause, "', '".join([str(row[0]) for row in arcpy.da.SearchCursor(target_feature_layer, [field_for_where_clause])]))
-                    else:
-                        target_where_clause = "%s IN (%s)" % (field_for_where_clause, ", ".join([str(row[0]) for row in arcpy.da.SearchCursor(target_feature_layer, [field_for_where_clause])])) 
-                    reference_where_clause = ""
+        count = int(arcpy.GetCount_management(target_feature_layer).getOutput(0))
+        if arcgis_pro:
+            userquery = confirm_assignment("Change for %d features (selected in target layer)?" % (count),
+                                           "Confirm Assignment", 4)
+        else:
+            userquery = pythonaddins.MessageBox("Change for %d features (selected in target layer)?" % (count), "Confirm Assignment", 4)
+        if not userquery == "Yes":
+            arcpy.AddMessage("Cancelled both user queries")
+            return
+        else:
+            if field_for_where_clause.lower() == "MUID".lower():
+                target_where_clause = "%s IN ('%s')" % (field_for_where_clause, "', '".join([str(row[0]) for row in arcpy.da.SearchCursor(target_feature_layer, [field_for_where_clause])]))
             else:
-                if check_other_layer:
-                    arcpy.AddMessage("Nothing selected")
-                    return
-        except Exception as e:
-            arcpy.AddError(e)
-            return  
-            
-        # arcpy.AddMessage(target_where_clause)
-        # arcpy.AddMessage(reference_where_clause)
-                
+                target_where_clause = "%s IN (%s)" % (field_for_where_clause, ", ".join([str(row[0]) for row in arcpy.da.SearchCursor(target_feature_layer, [field_for_where_clause])]))
+            reference_where_clause = ""
+
+        arcpy.AddMessage("Query Confirmed")
+
         class Reference():
             pass
             
@@ -1562,11 +1576,6 @@ class CopyDiameter(object):
         fields = changeShapeFieldname([field.name.lower() for field in arcpy.ListFields(reference_feature_layer)])
         if "esri_oid" in fields:
             fields.remove("esri_oid")
-        # arcpy.AddMessage(fields)
-
-        arcpy.AddMessage(reference_where_clause)
-        arcpy.AddMessage(arcpy.Describe(reference_feature_layer).catalogPath)
-        arcpy.AddMessage(fields)
 
         with arcpy.da.SearchCursor(arcpy.Describe(reference_feature_layer).catalogPath, fields, where_clause = reference_where_clause) as cursor:
             for row in cursor:
@@ -1575,25 +1584,23 @@ class CopyDiameter(object):
                     setattr(reference, field.lower().replace("shape@","shape"), row[field_i])
                 
                 references.append(reference)
-        # arcpy.AddMessage([reference.muid for reference in references])
-        # arcpy.AddMessage([reference.diameter for reference in references])
         
         fields = changeShapeFieldname([field.name.lower() for field in arcpy.ListFields(target_feature_layer)])
         if "ESRI_OID" in fields:
             fields.remove("ESRI_OID")
 
         # arcpy.AddMessage(fields)
-        if match_by.lower() != "FROMNODE-TONODE".lower():
-            # arcpy
+        if match_by.lower() != "FROMNODE-TONODE".lower() and match_by.lower() != "NEAREST".lower():
             match_by_field_i = [field_i for field_i, field in enumerate(fields) if field.lower() == match_by.lower().replace("shape","shape@")][0]
-        # arcpy.AddMessage(fields)
-        # arcpy.AddMessage(match_by_field_i)
+
         
         target_where_clause = target_where_clause if target_where_clause else ""
-        # arcpy.AddMessage(reference_where_clause)
 
-        if match_by.lower() == "FROMNODE-TONODE".lower():
+        if match_by.lower() == "FROMNODE-TONODE".lower() or "diameter" in invert_level_assignment.lower():
             reference_network = PipeNetwork(reference_MU_database, map_only="link")
+            target_network = PipeNetwork(target_MU_database, map_only="link")
+
+        if "diameter" in invert_level_assignment.lower():
             target_network = PipeNetwork(target_MU_database, map_only="link")
 
         if is_sqlite:
@@ -1602,24 +1609,24 @@ class CopyDiameter(object):
                         MU_database) as connection:
                 update_cursor = connection.cursor()
                 layer_name = os.path.basename(arcpy.Describe(target_feature_layer).catalogPath).replace("main.","")
-                arcpy.AddMessage(copy_field)
-                # copy_field = copy_field if type(copy_field) is str else copy_field.split(";")
-                # arcpy.AddMessage(copy_field)
-                # arcpy.AddMessage(target_where_clause)
-                # arcpy.AddMessage([row[0] for row in arcpy.da.SearchCursor(target_feature_layer, ["MUID"], target_where_clause)])
+                arcpy.AddMessage("HERE!")
+                if match_by.lower() == "nearest":
+                    # building ckdtree for speedup
+                    from scipy.spatial import cKDTree
+                    ckdtree_coords = []
+                    ckdtree_muids = []
+                    with arcpy.da.SearchCursor(reference_feature_layer, ["MUID", "SHAPE@XY"]) as cursor:
+                        for oid, (x, y) in cursor:
+                            ckdtree_coords.append((x, y))
+                            ckdtree_muids.append(oid)
 
-                # arcpy.AddMessage("BOB")
-                # arcpy.AddMessage(references[0].muid)
-                for MUID in [row[0] for row in arcpy.da.SearchCursor(arcpy.Describe(target_feature_layer).catalogPath, ["MUID"], target_where_clause)]:
+                    # Build KDTree
+                    tree = cKDTree(np.array(ckdtree_coords))
+
+                for MUID, target_coord in arcpy.da.SearchCursor(arcpy.Describe(target_feature_layer).catalogPath, ["MUID", "SHAPE@XY"], target_where_clause):
                     if match_by.lower() == "FROMNODE-TONODE".lower():
                         if MUID in target_network.links:
                             muid_field_i = [i for i, field in enumerate(fields) if field.lower() == "muid"][0]
-                            # arcpy.AddMessage(row[muid_field_i])
-                            # arcpy.AddMessage(MUID in target_network.links)
-                            # arcpy.AddMessage(reference.muid in reference_network.links)
-                            # arcpy.AddMessage((reference_network.links[reference.muid].fromnode, reference_network.links[reference.muid].tonode))
-                            # arcpy.AddMessage((reference_network.links[reference.muid].fromnode,
-                            #                   reference_network.links[reference.muid].tonode))
                             try:
                                 match = [reference for reference in references if reference_network.links[reference.muid].fromnode.lower() == target_network.links[MUID].fromnode.lower() and reference_network.links[reference.muid].tonode.lower() == target_network.links[MUID].tonode.lower()
                                          if reference.muid in reference_network.links and MUID in target_network.links]
@@ -1632,16 +1639,44 @@ class CopyDiameter(object):
                             # arcpy.AddMessage(match)
                         else:
                             continue
-                        # match = [reference for reference in references if getattr(reference, "muid") == match_MUID][0]
+                    elif match_by.lower() == "nearest":
+                        distance, index = tree.query(target_coord)
+                        if distance <= max_distance: # found match
+                            match = [reference for reference in references if reference.muid == ckdtree_muids[index]]
                     else:
-                        pass
-                        # arcpy.AddMessage(MUID)
-
                         match = [reference for reference in references if getattr(reference, "muid") == MUID]
                     if match:
                         for field in copy_field:
                             field_value = getattr(match[0], field.lower())
                             # arcpy.AddMessage(type(field_value) is str or type(field_value) is unicode)
+
+                            if field.lower() == "invertlevel":
+
+                                # invert_level_assignment.filter.list = ["None", "Subtract 40 cm",
+                                #                                        "Subtract 40 cm and wall thickness",
+                                #                                        r"Subtract difference in Pipe Diameter / 2"]
+                                if "subtract 40 cm" in invert_level_assignment.lower():
+                                    field_value = field_value - 0.4
+
+                                if "wall thickness" in invert_level_assignment.lower():
+                                    max_diameter = np.max([link.diameter for link in reference_network.links.values() if
+                                                           link.fromnode == match[0].muid or link.tonode == match[0].muid])
+                                    idx = (pipe_catalogue["Intern_dia"] - max_diameter).abs().idxmin()
+                                    thick_bot = pipe_catalogue.loc[idx, "Thick_bot"]
+
+                                    adjustment = math.ceil(thick_bot / 1000 * 20) / 20
+                                    field_value = field_value - adjustment
+
+                                if "pipe diameter" in invert_level_assignment.lower():
+                                    diameter_reference = np.max([link.diameter for link in reference_network.links.values() if
+                                                        link.fromnode == match[0].muid])
+
+                                    diameter_target = np.max(
+                                        [link.diameter for link in target_network.links.values() if
+                                         link.fromnode == MUID])
+
+                                    arcpy.AddMessage((field_value, diameter_reference, diameter_target))
+                                    field_value = round(field_value - abs(diameter_reference - diameter_target) / 2, 2)
 
                             old_field_value = update_cursor.execute("SELECT %s FROM %s WHERE MUID = '%s'" % (field, layer_name, MUID)).fetchone()[0]
                             sql_expression = "UPDATE %s SET %s = %s WHERE MUID = '%s'" % (layer_name, field,
@@ -1663,10 +1698,34 @@ class CopyDiameter(object):
                 for row in cursor:
                     # arcpy.AddMessage((fields, row))
                     if match_by.lower() == "FROMNODE-TONODE".lower():
-                        muid_field_i = [i for i,field in enumerate(fields) if field.lower() == "muid"]
-                        match_MUID = [link.muid for link in reference_links if link.fromnode.lower() == target_network.links[row[muid_field_i]].fromnode and link.tonode.lower() == target_network.links[row[muid_field_i]].tonode]
-                        arcpy.AddMessage("FEATURE NOT SUPPORTED YET")
-                        return
+                        muid_field_i = [i for i, field in enumerate(fields) if field.lower() == "muid"][0]
+                        MUID = row[muid_field_i]
+
+                        for reference in references:
+                            link = reference_network.links[reference.muid]
+                            try:
+                                if link.fromnode.lower() == target_network.links[MUID].fromnode.lower() and link.tonode.lower() == target_network.links[MUID].tonode.lower():
+                                    match = [reference]
+                                    break
+                            except Exception as e:
+                                pass
+
+                        if match:
+                            reference = match[0]
+                            for field_i, field in enumerate(fields):
+                                if field.lower() in [f.lower() for f in copy_field]:
+                                    if row[field_i] != getattr(reference, field.lower()):
+                                        arcpy.AddMessage(
+                                            "Changed %s field %s from %s to %s" % (reference.muid, field,
+                                                                                   row[field_i], getattr(reference,
+                                                                                                         field.lower())))
+                                        row[field_i] = getattr(reference, field.lower())
+                                elif field == "SHAPE":
+                                    shape = deepcopy(row[field_i])
+                                    row[field_i] = shape
+                            # arcpy.AddMessage(row)
+                            cursor.updateRow(row)
+
                         # match = [reference for reference in references if reference_network.links[
 
                     else:
@@ -1790,9 +1849,13 @@ class InterpolateInvertLevels(object):
 
         if len(links_MUIDs) == len(
                 [row[0] for row in arcpy.da.SearchCursor(arcpy.Describe(pipe_layer).CatalogPath, ["MUID"])]):
-            userquery = pythonaddins.MessageBox("Interpolate invert slope for %d pipes?" % (len(links_MUIDs)), "Confirm Assignment", 4)
+            if arcgis_pro:
+                userquery = confirm_assignment("Interpolate invert slope for %d pipes?" % (len(links_MUIDs)), "Confirm Assignment", 4)
+            else:
+                userquery = pythonaddins.MessageBox("Interpolate invert slope for %d pipes?" % (len(links_MUIDs)), "Confirm Assignment", 4)
             if not userquery == "Yes":
                 return
+
         
         if not len(links_MUIDs) == len(set(links_MUIDs)):
             arcpy.AddError("Error: There's two or more pipes with identical names.")
@@ -1833,6 +1896,8 @@ class InterpolateInvertLevels(object):
             if dwlevel:
                 invert_levels[end_node] = dwlevel
 
+        libs = import_or_install(["networkx"])
+        nx = libs["networkx"]
         network = nx.DiGraph()
         for link in msm_Link_Network.links.values():
             network.add_edge(link.fromnode, link.tonode,
@@ -2003,7 +2068,9 @@ class GetMinimumSlope(object):
         # end_node_critical = (end_node_critical if
         #                      end_node_critical else levels[end_node])
 
-        network = nx.DiGraph()
+        libs = import_or_install(["networkx"])
+        nx = libs["networkx"]
+#         network = nx.DiGraph()
         for link in msm_Link_Network.links.values():
             network.add_edge(link.fromnode, link.tonode,
                              weight=link.length)
@@ -2608,8 +2675,11 @@ class SetDischargeRegulation(object):
 
         if len(links_MUIDs) == len(
                 [row[0] for row in arcpy.da.SearchCursor(arcpy.Describe(pipe_layer).CatalogPath, ["MUID"])]):
-            userquery = pythonaddins.MessageBox("Set Discharge Regulation for %d pipes?" % (len(links_MUIDs)),
-                                                "Confirm Assignment", 4)
+
+            if arcgis_pro:
+                userquery = confirm_assignment("Set Discharge Regulation for %d pipes?" % (len(links_MUIDs)), "Confirm Assignment", 4)
+            else:
+                userquery = pythonaddins.MessageBox("Set Discharge Regulation for %d pipes?" % (len(links_MUIDs)), "Confirm Assignment", 4)
             if not userquery == "Yes":
                 return
 
@@ -2856,7 +2926,7 @@ class DrawLongitudinalProfiles(object):
             name="result_files",
             datatype="File",
             multiValue=True,
-            parameterType="Required",
+            parameterType="Optional",
             direction="Input")
         result_files.filter.list = ["res1d"]
 
@@ -2969,7 +3039,16 @@ class DrawLongitudinalProfiles(object):
             "Critical level"
             ]
 
-        parameters = [pipe_layer, result_files, draw_map, pdf_output, overwrite_or_append, backup_tempfile, zoom_level, reference_scale, figure_size, font_size, elements_to_display]
+        trace_through = arcpy.Parameter(
+            displayName="Trace single Path",
+            name="trace_through",
+            datatype="Boolean",
+            parameterType="optional",
+            category="Advanced Settings",
+            direction="Input")
+        trace_through.value = False
+
+        parameters = [pipe_layer, result_files, draw_map, pdf_output, overwrite_or_append, backup_tempfile, zoom_level, reference_scale, figure_size, font_size, elements_to_display, trace_through]
         return parameters
 
     def isLicensed(self):
@@ -3066,7 +3145,9 @@ class DrawLongitudinalProfiles(object):
         import sqlite3
         import pandas as pd
         import numpy as np
-        import networkx as nx
+        libs = import_or_install(["networkx"])
+        nx = libs["networkx"]
+#         import networkx as nx
         import matplotlib
         matplotlib.use("TkAgg")
         import matplotlib.pyplot as plt
@@ -3091,6 +3172,7 @@ class DrawLongitudinalProfiles(object):
         font_size = parameters[9].Value
         elements_to_display = [f.replace("'", "").lower() for f in parameters[10].ValueAsText.split(";")] if parameters[
             10].ValueAsText else None
+        trace_through = parameters[11]
 
         if arcgis_pro:
             if result_files:
@@ -3113,13 +3195,13 @@ class DrawLongitudinalProfiles(object):
         selection_sets = {}
         pipe_layer_references = {}
         for pipe_layer in pipe_layers:
-            # pipe_layer_references[pipe_layer] = pipe_layer
+            longname = pipe_layer.longName if arcgis_pro else str(pipe_layer)
             for lyr in (map_obj.listLayers() if arcgis_pro else arcpy.mapping.ListLayers(mxd)):
                 if lyr.name == pipe_layer.name and lyr.getSelectionSet():
-                    pipe_layer_references[pipe_layer.longName] = lyr
+                    pipe_layer_references[longname] = lyr
                     break
             try:
-                selection_sets[pipe_layer.longName] = pipe_layer_references[pipe_layer.longName].getSelectionSet()
+                selection_sets[longname] = pipe_layer_references[longname].getSelectionSet()
             except Exception as e:
                 arcpy.AddWarning(str(e))
 
@@ -3195,8 +3277,16 @@ class DrawLongitudinalProfiles(object):
 
         # Determine actual field names for 'from' and 'to' nodes (handles naming variations)
         all_link_fields = [f.name.lower() for f in arcpy.ListFields(pipe_layers[0])]
-        fromnode_field = "fromnodeid" if "fromnodeid" in all_link_fields else "fromnode"
-        tonode_field = "tonodeid" if "tonodeid" in all_link_fields else "tonode"
+        if "fromnodeid" in all_link_fields:
+            fromnode_field = "fromnodeid"
+            tonode_field = "tonodeid"
+        elif "fromnode" in all_link_fields:
+            fromnode_field = "fromnode"
+            tonode_field = "tonode"
+        else: # Fallback! Will find fromnode and tonode based on geometry instead.
+            fromnode_field = "muid"
+            tonode_field = "muid"
+
 
         # Fields to retrieve, including the SHAPE token
         link_fields = [
@@ -3219,8 +3309,16 @@ class DrawLongitudinalProfiles(object):
         if has_database:
             for pipe_layer in pipe_layers:
                 if "msm_Weir".lower() in pipe_layer.dataSource.lower():
-                    with arcpy.da.SearchCursor(pipe_layer, ["muid", "fromnodeid", "tonodeid", "SHAPE@LENGTH", "crestlevel", "SHAPE@"], link_where) as cursor:
+                    with arcpy.da.SearchCursor(pipe_layer, ["muid", fromnode_field, "tonodefield", "SHAPE@LENGTH", "crestlevel", "SHAPE@"], link_where) as cursor:
+                        if fromnode_field == "muid": # fallback, generate fromnode and tonode based on geometry
+                            import mikegraph
+                            mike_urban_database = os.path.dirname(
+                                arcpy.Describe(pipe_layer).catalogPath).replace("\mu_Geometry", "")
+                            pipe_layer_network = mikegraph.PipeNetwork(mike_urban_database, filter_sql_query=link_where)
                         for muid, frm, to, length, up, shape in cursor:
+                            if fromnode_field == "muid": # fallback, generate fromnode and tonode based on geometry
+                                link = pipe_layer_network.links[muid]
+                                frm, to = link.fromnode, link.tonode
                             link = Link(
                                 muid=muid,
                                 fromnodeid=frm,
@@ -3234,7 +3332,14 @@ class DrawLongitudinalProfiles(object):
                             links[muid] = link
                 else:
                     with arcpy.da.SearchCursor(pipe_layer, link_fields, link_where) as cursor:
+                        if fromnode_field == "muid": # fallback, generate fromnode and tonode based on geometry
+                            import mikegraph
+                            mike_urban_database = os.path.dirname(arcpy.Describe(pipe_layer).catalogPath).replace("\mu_Geometry","")
+                            pipe_layer_network = mikegraph.PipeNetwork(mike_urban_database, filter_sql_query = link_where)
                         for muid, frm, to, length, diam, up, dw, shape in cursor:
+                            if fromnode_field == "muid": # fallback, generate fromnode and tonode based on geometry
+                                link = pipe_layer_network.links[muid]
+                                frm, to = link.fromnode, link.tonode
                             link = Link(
                                 muid=muid,
                                 fromnodeid=frm,
@@ -3344,9 +3449,10 @@ class DrawLongitudinalProfiles(object):
                     self.water_level_end = None
 
             for f in result_files:
-                name = os.path.basename(os.path.splitext(f)[0]).replace("Base","").replace("Result_file","")
+                name = os.path.basename(os.path.splitext(f)[0]).replace("Base","").replace("Result_file","").replace("Default_Network_HD","")
                 scenario = Scenario(name, f)
-                res1d_reaches = Res1D(f).network.reaches
+                res1d_reaches = Res1D(f, time=[0, 0], nodes=[""], reaches=links_selected, catchments=[""], quantities=[],
+                                      derived_quantities=[]).network.reaches
 
                 links_fixed = links_selected.copy()
                 fix_links = True # Fix Links if muid is missing from Result File
@@ -3360,6 +3466,7 @@ class DrawLongitudinalProfiles(object):
                             except Exception as e:
                                 pass
 
+                arcpy.AddMessage(f)
                 res1d = Res1D(f, reaches = links_fixed)
                 for pipe_i, pipe in enumerate(links_fixed):
                     if pipe in res1d.reaches:
@@ -3381,18 +3488,32 @@ class DrawLongitudinalProfiles(object):
         # -----------------------
         # 3) Graph & Paths
         # -----------------------
+        libs = import_or_install(["networkx"])
+        nx = libs["networkx"]
         G = nx.DiGraph()
         for link in links.values():
             G.add_edge(link.fromnodeid, link.tonodeid)
 
-        sources = [n for n, d in G.in_degree() if d == 0]
-        sinks = [n for n, d in G.out_degree() if d == 0]
-        paths = []
-        for s in sources:
-            for t in sinks:
-                for p in nx.all_simple_paths(G, s, t):
-                    if p not in paths:
-                        paths.append(p)
+        if trace_through.Value: # use eulerian path
+            H = G.to_undirected()
+            if not nx.has_eulerian_path(H):
+                raise Exception("Graph is not Eulerian")
+
+            edge_path = list(nx.eulerian_path(H))
+
+            # convert edges → node path
+            path = [edge_path[0][0]] + [v for u, v in edge_path]
+
+            paths = [path]
+        else:
+            sources = [n for n, d in G.in_degree() if d == 0]
+            sinks = [n for n, d in G.out_degree() if d == 0]
+            paths = []
+            for s in sources:
+                for t in sinks:
+                    for p in nx.all_simple_paths(G, s, t):
+                        if p not in paths:
+                            paths.append(p)
 
         arcpy.AddMessage(tlog.log("Plotting"))
         # 
@@ -3433,7 +3554,7 @@ class DrawLongitudinalProfiles(object):
             # Calculate Chainage
             chainage = [0.0]
             for fromnodeid, tonodeid in zip(path, path[1:]):
-                link = [link for link in links.values() if link.fromnodeid == fromnodeid and link.tonodeid == tonodeid][0]
+                link = [link for link in links.values() if link.fromnodeid in (fromnodeid, tonodeid) and link.tonodeid in (fromnodeid, tonodeid)][0]
 
                 chainage.append(chainage[-1] + link.length)
 
@@ -3447,13 +3568,18 @@ class DrawLongitudinalProfiles(object):
             else:
                 figsize = None
 
+            plt.style.use('default')
+
             if draw_map:
                 figure_width = max(8, 8 + 0.5 * (chainage[-1]/30 - 2) + 5)
 
                 map_width = 5
                 # 1 row, 2 columns → constrained_layout manages spacing
-                fig = plt.figure(figsize=figsize if figsize else (figure_width, 5), constrained_layout=True
-                                 )
+                fig = plt.figure(figsize=figsize if figsize else (figure_width, 5))
+                try:
+                    fig.set_constrained_layout(True)
+                except:
+                    plt.tight_layout()
                 if figsize:
                     gs = fig.add_gridspec(1, 2, width_ratios=[figsize[0]/3*2, figsize[0]/3*1])
                 else:
@@ -3461,11 +3587,26 @@ class DrawLongitudinalProfiles(object):
 
                 ax_plot = fig.add_subplot(gs[0, 0])
                 ax_map = fig.add_subplot(gs[0, 1])
+                try:
+                    ax_plot.set_facecolor('white')  # axes background
+                    fig.patch.set_facecolor('white')  # figure background
+                except Exception as e:
+                    arcpy.AddWarning(e.message)
             else:
                 figure_width = max(8, 8 + 0.5 * (chainage[-1] / 30 - 2))
-                fig, ax_plot = plt.subplots(figsize=figsize if figsize else (figure_width, 5), dpi=300, constrained_layout=True)
+
+                fig, ax_plot = plt.subplots(figsize=figsize if figsize else (figure_width, 5), dpi=300,)
+                try:
+                    fig.set_constrained_layout(True)
+                except:
+                    plt.tight_layout()
                 fig.subplots_adjust(left=0.02, right=0.98, top=0.95, bottom=0.09)
                 ax_map = None
+                try:
+                    ax_plot.set_facecolor('white')  # axes background
+                    fig.patch.set_facecolor('white')  # figure background
+                except Exception as e:
+                    arcpy.AddWarning(e.message)
 
             manhole_width = 2
 
@@ -3474,7 +3615,7 @@ class DrawLongitudinalProfiles(object):
                 i = path.index(fromnodeid)
                 chainage_0, chainage_1 = chainage[i], chainage[i + 1]
                 chainage_0_adj, chainage_1_adj = chainage_0 + manhole_width/2, chainage_1 - manhole_width/2
-                link = [link for link in links.values() if link.fromnodeid == fromnodeid and link.tonodeid == tonodeid][0]
+                link = [link for link in links.values() if link.fromnodeid in (fromnodeid, tonodeid) and link.tonodeid in (fromnodeid, tonodeid)][0]
 
                 # get uplevel, fallback to upstream node invert
                 uplevel = link.uplevel if link.uplevel else nodes[fromnodeid].invertlevel
@@ -3553,7 +3694,7 @@ class DrawLongitudinalProfiles(object):
                 ax_plot.tick_params(axis="y", which="both", labelbottom=False)
 
             if "profile id" in elements_to_display:
-                ax_plot.set_title(u"{} → {}".format(path[0], path[-1]))
+                ax_plot.set_title(u"{} %s {}".format(path[0], u"→" if arcgis_pro else "->", path[-1]))
             ax_plot.grid(True, linestyle='--', lw=0.5)
             ax_plot.set_xlim(left=-15, right = np.ceil(chainage[-1] / 50) * 50 + 1)   # only changes the left bound
 
