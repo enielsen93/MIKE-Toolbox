@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import re
+import arcpy
 
 if "mapping" in dir(arcpy):
     arcgis_pro = False
@@ -26,8 +27,6 @@ class SetDefinitionQuery(object):
         self.label = "Set Definition Query to Selection"
         self.description = "Set Definition Query to Selection"
         self.canRunInBackground = False
-
-
 
     def getParameterInfo(self):
         # Define parameter definitions
