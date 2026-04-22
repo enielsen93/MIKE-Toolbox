@@ -7,6 +7,7 @@ import os
 import sys
 import numpy as np
 import sqlite3
+import arcpy
 
 if "mapping" in dir(arcpy):
     arcgis_pro = False
@@ -47,22 +48,51 @@ class FieldCalculator(object):
             parameterType="Required",
             multiValue = "True",
             direction="Input")
-        
-        field = arcpy.Parameter(
-			displayName= "Field to assign value to",
-			name="field",
-			datatype="GPString",
-			parameterType="Required",
-			direction="Input")
-        
-        value = arcpy.Parameter(
-            displayName="Value",
-            name="value",
+
+        field1 = arcpy.Parameter(
+            displayName="Field 1 to assign value to",
+            name="field1",
             datatype="GPString",
-            parameterType="Required",
+            parameterType="Optional",
             direction="Input")
-        
-        params = [featureclass, field, value]
+
+        value1 = arcpy.Parameter(
+            displayName="Value 1",
+            name="value1",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input")
+
+        field2 = arcpy.Parameter(
+            displayName="Field 2 to assign value to",
+            name="field2",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input")
+
+        value2 = arcpy.Parameter(
+            displayName="Value 2",
+            name="value2",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input")
+
+        field3 = arcpy.Parameter(
+            displayName="Field 3 to assign value to",
+            name="field3",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input")
+
+        value3 = arcpy.Parameter(
+            displayName="Value 3",
+            name="value3",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input")
+
+        # Combine all parameters
+        params = [featureclass, field1, value1, field2, value2, field3, value3]
 
         return params
 
@@ -92,8 +122,29 @@ class FieldCalculator(object):
                          lyr.getSelectionSet() and "muid" in [field.name.lower() for field in arcpy.ListFields(lyr)]]
                 if featureclasses:
                     parameters[0].value = "; ".join([featureclass for featureclass in featureclasses])
-        if parameters[0].Value and not parameters[1].Value:
-            parameters[1].filter.list = [f.name for f in arcpy.Describe(parameters[0].ValueAsText.split(";")[0]).fields]
+
+        if parameters[0].Value:
+            fields = [f.name for f in arcpy.Describe(parameters[0].ValueAsText.split(";")[0]).fields]
+            for i in [1, 3, 5]:
+                if not parameters[i].Value:
+                    parameters[i].filter.list = fields
+
+        if parameters[1].Value:
+            parameters[3].enabled = True
+            parameters[4].enabled = True
+            if parameters[3].Value:
+                parameters[5].enabled = True
+                parameters[6].enabled = True
+            else:
+                parameters[5].enabled = False
+                parameters[6].enabled = False
+        else:
+            parameters[3].enabled = False
+            parameters[4].enabled = False
+            parameters[5].enabled = False
+            parameters[6].enabled = False
+
+
 
 
         return
@@ -103,8 +154,12 @@ class FieldCalculator(object):
 
     def execute(self, parameters, messages):
         featureclasses = parameters[0].Values
-        field = parameters[1].ValueAsText
-        value = parameters[2].ValueAsText
+        field1 = parameters[1].ValueAsText
+        value1 = parameters[2].ValueAsText
+        field2 = parameters[3].ValueAsText
+        value2 = parameters[4].ValueAsText
+        field3 = parameters[5].ValueAsText
+        value3 = parameters[6].ValueAsText
 
         for featureclass in featureclasses:
             MU_database = os.path.dirname(arcpy.Describe(featureclass).catalogPath).replace("\mu_Geometry", "").replace("!delete!","")
@@ -143,13 +198,16 @@ class FieldCalculator(object):
                 if ".sqlite" in MU_database:
                     try:
                         connection = sqlite3.connect(
-                                    MU_database)
+                            MU_database)
                         update_cursor = connection.cursor()
-                        arcpy.AddMessage("UPDATE %s SET %s = %s WHERE MUID IN %s" % (featureclass_name.replace("main.",""), field, value,
-                                                                                     "('%s')" % ("','".join(selection))))
-                        update_query = "UPDATE %s SET %s = %s WHERE MUID IN %s" % (featureclass_name.replace("main.",""), field, value,
-                                                                                     "('%s')" % ("','".join(selection)))
-                        update_cursor.execute(update_query)
+                        for field, value in zip([field1, field2, field3], [value1, value2, value3]):
+                            if value:
+
+                                arcpy.AddMessage("UPDATE %s SET %s = %s WHERE MUID IN %s" % (featureclass_name.replace("main.",""), field, value,
+                                                                                             "('%s')" % ("','".join(selection))))
+                                update_query = "UPDATE %s SET %s = %s WHERE MUID IN %s" % (featureclass_name.replace("main.",""), field, value,
+                                                                                             "('%s')" % ("','".join(selection)))
+                                update_cursor.execute(update_query)
                         connection.commit()
                         connection.close()
                     except Exception as e:
@@ -161,16 +219,18 @@ class FieldCalculator(object):
                         if connection:
                             connection.close()
                 elif ".mdb" in MU_database:
-                    edit = arcpy.da.Editor(MU_database)
-                    edit.startEditing(False, True)
-                    edit.startOperation()
-                    print(featureclass)
-                    with arcpy.da.UpdateCursor(arcpy.Describe(featureclass).catalogPath, [field], where_clause = "MUID IN %s" % ("('%s')" % ("','".join(selection)))) as cursor:
-                        for row in cursor:
-                            row[0] = value
-                            cursor.updateRow(row)
+                    for field, value in zip([field1, field2, field3], [value1, value2, value3]):
+                        if value:
+                            edit = arcpy.da.Editor(MU_database)
+                            edit.startEditing(False, True)
+                            edit.startOperation()
+                            print(featureclass)
+                            with arcpy.da.UpdateCursor(arcpy.Describe(featureclass).catalogPath, [field], where_clause = "MUID IN %s" % ("('%s')" % ("','".join(selection)))) as cursor:
+                                for row in cursor:
+                                    row[0] = value
+                                    cursor.updateRow(row)
 
-                    edit.stopOperation()
-                    edit.stopEditing(True)
+                            edit.stopOperation()
+                            edit.stopEditing(True)
         return
         
