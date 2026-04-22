@@ -8,6 +8,7 @@ import re
 import hashlib
 import xlwt
 import csv
+import sys
 
 if "mapping" in dir(arcpy):
     arcgis_pro = False
@@ -1688,6 +1689,8 @@ class DuplicateCatchments(object):
                     msm_HModA_table[row[1]] = row  # Store rows with the MUID as the key
             arcpy.AddMessage((msm_HModA, "CatchID IN ('%s')" % ("', '".join(MUIDs_duplicate)), msm_HModA_table))
 
+            arcpy.AddMessage(msm_HModA_table)
+
             # Dictionary to store rows from the msm_CatchCon table where MUIDs are duplicated
             msm_CatchCon_table = {}
             # Use a SearchCursor to fetch rows from msm_CatchCon where CatchID matches duplicate MUIDs
@@ -1717,16 +1720,18 @@ class DuplicateCatchments(object):
             # For each duplicate MUID, assign the original MUID as the first element in its reassignment list
             for MUID in MUIDs_reassigned:
                 MUIDs_reassigned[MUID][0] = MUID
-            # arcpy.AddMessage([f.name for f in arcpy.ListFields(msm_HModA) if f.name.lower() != "objectid"])
-            # arcpy.AddMessage("BOB?)")
+
             # Use an InsertCursor to add new rows to the msm_HModA table with the reassigned MUIDs
             with arcpy.da.InsertCursor(msm_HModA, [f.name for f in arcpy.ListFields(msm_HModA) if f.name.lower() != "objectid"]) as cursor:
                 for original_MUID in MUIDs_reassigned.keys():
                     for new_MUID in MUIDs_reassigned[original_MUID]:
-                        row = list(msm_HModA_table[original_MUID])[1:]  # Copy the original row
-                        row[0] = new_MUID  # Replace the MUID with the reassigned one
-                        arcpy.AddMessage("Inserting row %s " % row)
-                        cursor.insertRow(row)  # Insert the new row with the updated MUID
+                        try:
+                            row = list(msm_HModA_table[original_MUID])[1:]  # Copy the original row
+                            row[0] = new_MUID  # Replace the MUID with the reassigned one
+                            arcpy.AddMessage("Inserting row %s " % row)
+                            cursor.insertRow(row)  # Insert the new row with the updated MUID
+                        except exception as e:
+                            arcpy.AddWarning(e.message)
                     arcpy.AddMessage("Inserted new row %s in msm_HModA table." % row)
 
 
@@ -1740,11 +1745,14 @@ class DuplicateCatchments(object):
                 for original_MUID in MUIDs_reassigned.keys():
                     for new_MUID in MUIDs_reassigned[original_MUID]:
                         new_MUID_i += 1
-                        temp_row = list(msm_CatchCon_table[original_MUID])  # Copy the original row
-                        temp_row[2] = new_MUID  # Update the MUID to the reassigned one
-                        temp_row[1] = catch_con_max_MUID + new_MUID_i  # Assign a new unique MUID value
-                        cursor.insertRow(temp_row)  # Insert the updated row into the table
-                        arcpy.AddMessage("Inserted new row %s into msm_CatchCon table." % temp_row)
+                        try:
+                            temp_row = list(msm_CatchCon_table[original_MUID])  # Copy the original row
+                            temp_row[2] = new_MUID  # Update the MUID to the reassigned one
+                            temp_row[1] = catch_con_max_MUID + new_MUID_i  # Assign a new unique MUID value
+                            cursor.insertRow(temp_row)  # Insert the updated row into the table
+                            arcpy.AddMessage("Inserted new row %s into msm_CatchCon table." % temp_row)
+                        except Exception as e:
+                            arcpy.AddWarning(e.message)
       
         
         return
@@ -2037,7 +2045,7 @@ class CatchmentSlopeAnalysis(object):
             category="Additional Settings",
             parameterType="Required",
             direction="Input")
-        resolution.value = 8
+        resolution.value = 2
 
         required_slope = arcpy.Parameter(
             displayName="Required Slope [m/m]:",
@@ -2075,7 +2083,15 @@ class CatchmentSlopeAnalysis(object):
         # msm_Link_field.filter.list = ["InvertLevel", "GroundLevel", "CriticalLevel"]
         # msm_Link_field.value = "InvertLevel"
 
-        parameters = [catchment_layer, msm_Link_field, raster, initial_depth, resolution, required_slope, add_debug_output, result_layer, result_layer_field]
+        center_of_pipe = arcpy.Parameter(
+            displayName="Calculate slope to Center of Pipe:",
+            name="center_of_pipe",
+            datatype="GPBoolean",
+            category="Additional Settings",
+            parameterType="Optional",
+            direction="Input")
+
+        parameters = [catchment_layer, msm_Link_field, raster, initial_depth, resolution, required_slope, add_debug_output, result_layer, result_layer_field, center_of_pipe]
 
         return parameters
 
@@ -2084,6 +2100,14 @@ class CatchmentSlopeAnalysis(object):
 
     def updateParameters(self, parameters):  # optional
         result_layer = parameters[7].Value
+        msm_Link_field = parameters[1]
+        center_of_pipe = parameters[9]
+        if msm_Link_field.value.lower() == "InvertLevel".lower():
+            center_of_pipe.enabled = True
+        else:
+            center_of_pipe.enabled = False
+            center_of_pipe.value = False
+
         if result_layer:
             parameters[1].enabled = False
             parameters[8].enabled = True
@@ -2111,6 +2135,7 @@ class CatchmentSlopeAnalysis(object):
         add_debug_output = parameters[6].Value
         result_layer = parameters[7].ValueAsText
         result_layer_field = parameters[8].ValueAsText
+        center_of_pipe = parameters[9].Value
 
         if arcgis_pro:
             mxd = arcpy.mp.ArcGISProject("CURRENT")
@@ -2125,7 +2150,6 @@ class CatchmentSlopeAnalysis(object):
         MU_database = os.path.dirname(arcpy.Describe(catchment_layer).catalogPath).replace("\mu_Geometry", "")
         msm_Node = os.path.join(MU_database, "msm_Node")
         msm_Catchment = catchment_layer
-
 
         catchments_output = r"in_memory\catchments_export"
         clipped_raster = "in_memory\DTM_clipped"
@@ -2376,8 +2400,15 @@ class CatchmentSlopeAnalysis(object):
                             links_3d.append(link.shape_3d(uplevel=link_results[link.MUID].up_max_elevation,
                                                           dwlevel=link_results[link.MUID].dw_max_elevation))
                         else:
-                            links_3d.append(link.shape_3d(uplevel=nodes[link.fromnode].critical_level,
-                                                          dwlevel=nodes[link.tonode].critical_level))
+                            uplevel = nodes[link.fromnode].critical_level
+                            dwlevel = nodes[link.tonode].critical_level
+
+                            if center_of_pipe: # calculate slope to center of pipe
+                                uplevel += link.diameter / 2
+                                dwlevel += link.diameter / 2
+
+                            links_3d.append(link.shape_3d(uplevel=uplevel,
+                                                          dwlevel=dwlevel))
                     shortest_distance = 1e9
                     nearest_point = None
                     for link in links_3d:
