@@ -11,9 +11,12 @@ import xml.etree.ElementTree as ET
 import xml.dom.minidom
 import numpy as np
 import warnings
+import sys
 
+local_pkg_path = None
+local_used = None
 try:
-    # Try local package inside toolbox folder
+    # Try local package inside toolbox folderz
     local_pkg_path = os.path.join(os.path.dirname(__file__), "Data")
     if os.path.isdir(local_pkg_path):
         local_used = True
@@ -24,6 +27,7 @@ try:
     from mikegraph import TimeAreaAnalyzer
     from mikegraph import PipeNetwork
 except ImportError:
+    # raise Exception("BOB")
     raise ImportError(
         "The 'mikegraph' package is required but not installed.\n"
         "Checked local folder: {0} -> {1}\n\n"
@@ -32,7 +36,8 @@ except ImportError:
         "where python is the path to your ArcGIS python.exe".format(
             local_pkg_path, "FOUND" if local_used else "NOT FOUND")
     )
-
+except Exception as e:
+    raise Exception(traceback.format_exc())
 
 if "mapping" in dir(arcpy):
     arcgis_pro = False
@@ -66,7 +71,7 @@ def getAvailableFilename(filepath, parent = None):
                 # except:
                     # i += 1
             # return filepath + "%d" % i
-    else: 
+    else:
         return filepath
 
 class Catchment:
