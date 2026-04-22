@@ -14,6 +14,8 @@ from subprocess import call
 from shutil import copyfile
 import traceback
 import scipy
+import datetime
+import math
 
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
@@ -483,22 +485,22 @@ def readRes1D(res1d_file, MU_model = None, gdb_path = None, filter_to_extent = N
                 arcpy.management.AddFields(links_output_filepath, [[field, "FLOAT"] for field in fields])
 
             # Adding metadata
-            metadata_tablename = "Metadata"
-            if arcpy.Exists(os.path.join(gdb_path, metadata_tablename)):
-                try:
-                    arcpy.management.DeleteRows(os.path.join(gdb_path, metadata_tablename))
-                except Exception as e:
-                    arcpy.AddMessage(e)
-                    arcpy.AddMessage(os.path.join(gdb_path, metadata_tablename))
-                    pass
-            else:
-                metadata_filepath = arcpy.management.CreateTable(gdb_path, metadata_tablename)[0]
-                arcpy.management.AddField(metadata_filepath, "res1d_path", "TEXT", field_length=500)
-                arcpy.management.AddField(metadata_filepath, "simulation_date", "DATE")
-                arcpy.management.AddField(metadata_filepath, "result_analysis_date", "DATE")
-
-            with arcpy.da.InsertCursor(os.path.join(gdb_path, metadata_tablename), ["res1d_path", "simulation_date", "result_analysis_date"]) as cursor:
-                cursor.insertRow([res1d_file, datetime.datetime.fromtimestamp(os.path.getmtime(res1d_file)), datetime.datetime.now()])
+            # metadata_tablename = "Metadata"
+            # if arcpy.Exists(os.path.join(gdb_path, metadata_tablename)):
+            #     try:
+            #         arcpy.management.DeleteRows(os.path.join(gdb_path, metadata_tablename))
+            #     except Exception as e:
+            #         arcpy.AddMessage(e)
+            #         arcpy.AddMessage(os.path.join(gdb_path, metadata_tablename))
+            #         pass
+            # else:
+            #     metadata_filepath = arcpy.management.CreateTable(gdb_path, metadata_tablename)[0]
+            #     arcpy.management.AddField(metadata_filepath, "res1d_path", "TEXT", field_length=500)
+            #     arcpy.management.AddField(metadata_filepath, "simulation_date", "DATE")
+            #     arcpy.management.AddField(metadata_filepath, "result_analysis_date", "DATE")
+            # 
+            # with arcpy.da.InsertCursor(os.path.join(gdb_path, metadata_tablename), ["res1d_path", "simulation_date", "result_analysis_date"]) as cursor:
+            #     cursor.insertRow([res1d_file, datetime.datetime.fromtimestamp(os.path.getmtime(res1d_file)), datetime.datetime.now()])
 
 
             break
@@ -3138,6 +3140,7 @@ class PlotRes1D(object):
         else:
             time_filter = None
 
+        arcpy.AddMessage( parameters[2].ValueAsText.split(";") )
         result_files = [f.replace("'", "") for f in parameters[2].ValueAsText.split(";")] if parameters[2].ValueAsText else None
 
         libs = import_or_install(["mikeio1d"])
@@ -3197,7 +3200,7 @@ class PlotRes1D(object):
 
         for result_file_i, result_file in enumerate(result_files):
             if ".res1d" in result_file:
-                res1d = Res1D(result_file, time = time_filter, step_every = step_every if step_every > 1 else None)
+                res1d = Res1D(result_file, nodes = manholes_selected, reaches = pipes_selected, time = time_filter, step_every = step_every if step_every > 1 else None, quantities = ["WaterLevel", "Discharge"], derived_quantities = [])
                 try:
                     result_df = res1d.read([queries[key] for key in queries])
                 except Exception as e:
