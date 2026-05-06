@@ -27,6 +27,7 @@ import importlib
 import site
 import subprocess
 
+
 if "mapping" in dir(arcpy):
     arcgis_pro = False
     import arcpy.mapping as arcpymapping
@@ -1596,12 +1597,9 @@ class CopyDiameter(object):
         
         target_where_clause = target_where_clause if target_where_clause else ""
 
-        if match_by.lower() == "FROMNODE-TONODE".lower() or "diameter" in invert_level_assignment.lower():
+        if match_by.lower() == "FROMNODE-TONODE".lower() or "subtract" in invert_level_assignment.lower():
             reference_network = PipeNetwork(reference_MU_database, map_only="link")
-            target_network = PipeNetwork(target_MU_database, map_only="link")
-
-        if "diameter" in invert_level_assignment.lower():
-            target_network = PipeNetwork(target_MU_database, map_only="link")
+            target_network = PipeNetwork(target_MU_database, map_only="link", filter_sql_query = target_where_clause)
 
         if is_sqlite:
             # arcpy.AddMessage(MU_database)
@@ -1738,13 +1736,14 @@ class CopyDiameter(object):
                         for field_i, field in enumerate(fields):
                             # arcpy.AddMessage(copy_field)
                             if field.lower() in [f.lower() for f in copy_field]:
+                                field = field.lower().replace("shape@","shape")
                                 if row[field_i] != getattr(reference, field.lower()):
                                     arcpy.AddMessage(
                                         "Changed %s field %s from %s to %s" % (row[match_by_field_i], field, row[field_i], getattr(reference, field.lower())))
                                     row[field_i] = getattr(reference, field.lower())
-                            elif field == "SHAPE":
-                                shape = deepcopy(row[field_i])
-                                row[field_i] = shape
+                            # elif field == "SHAPE":
+                            #     shape = deepcopy(row[field_i])
+                            #     row[field_i] = shape
                         # arcpy.AddMessage(row)
                         cursor.updateRow(row)
 
@@ -3634,7 +3633,7 @@ class DrawLongitudinalProfiles(object):
                 mid = 0.5 * (chainage_0_adj + chainage_1_adj)
                 transformer = transforms.blended_transform_factory(ax_plot.transData, ax_plot.transAxes)
                 if "diameter" in elements_to_display and link.diameter and not np.isnan(link.diameter):
-                    ax_plot.text(mid, 0, u'ø{}'.format(int(link.diameter*1e3)),
+                    ax_plot.text(mid, 0, u'ø{}'.format(int(link.diameter*1e3)) if arcgis_pro else u'\u00F8{}'.format(int(link.diameter*1e3)),
                         transform=transformer,
                         ha='center', va='bottom', fontsize=font_size or 8)
 
@@ -3694,7 +3693,7 @@ class DrawLongitudinalProfiles(object):
                 ax_plot.tick_params(axis="y", which="both", labelbottom=False)
 
             if "profile id" in elements_to_display:
-                ax_plot.set_title(u"{} %s {}".format(path[0], u"→" if arcgis_pro else "->", path[-1]))
+                ax_plot.set_title(u"{} {} {}".format(path[0], u"→" if arcgis_pro else "->", path[-1]))
             ax_plot.grid(True, linestyle='--', lw=0.5)
             ax_plot.set_xlim(left=-15, right = np.ceil(chainage[-1] / 50) * 50 + 1)   # only changes the left bound
 

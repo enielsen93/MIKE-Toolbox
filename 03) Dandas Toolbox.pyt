@@ -371,19 +371,28 @@ class Dandas2MULinks(object):
             arcpy.DefineProjection_management(msm_Node, coordinate_system)
             # arcpy.CopyFeatures_management(os.path.dirname(os.path.realpath(__file__)) + "\Data\Templates.mdb\msm_Node", msm_Node)
 
-        def xml_get(node, tag, default=None, cast=str, slice_len=50):
+        try:
+            text_type = unicode  # Python 2
+        except NameError:
+            text_type = str  # Python 3
+
+        def xml_get(node, tag, default=None, cast=text_type, slice_len=50):
             el = node.find(tag)
+            # if tag == "OprindBundkoteJournalnr":
+            #     arcpy.AddMessage((el is None, el.text is None))
             if el is None or el.text is None:
                 return default
             try:
                 value = el.text.strip()
                 if slice_len is not None:
                     value = value[:slice_len]
+                # if tag == "OprindBundkoteJournalnr":
+                #     arcpy.AddMessage((value))
                 return cast(value) if cast else value
             except:
                 return default
 
-        def xml_get_path(node, path, default=None, cast=str):
+        def xml_get_path(node, path, default=None, cast=text_type):
             el = node
             for part in path.split("/"):
                 el = el.find(part)
@@ -410,10 +419,66 @@ class Dandas2MULinks(object):
         ID = 0
         knudenavn = []
 
+        class Oprindelsesjournal:
+            def __init__(self, journalnr, kode):
+                self.journalnr = journalnr
+                self.kode = kode
+
+
+                self.betegnelse = self.k_oprindelsekoord.get(self.kode, "N/A")
+
+            k_oprindelsekoord = {0: "U",
+                                 1: "S",
+                                 2: "P",
+                                 3: "D",
+                                 4: "F",
+                                 5: "L",
+                                 6: "TV",
+                                 7: "BR",
+                                 8: "N",
+                                 50: "A"}
+
+        oprindelse_journaler = {}
+        try:
+            journaler = tree.find("OprindelseGroup").findall("Oprindelse")
+            for journal in journaler:
+                journalnr = journal.attrib['Journalnr']
+
+                oprindkoordkode = xml_get(journal, "OprindKoordKode", cast=int, default=None)
+
+                if oprindkoordkode is not None:
+                    oprindelse_journaler[journalnr] = Oprindelsesjournal(journalnr, oprindkoordkode)
+
+        except Exception as e:
+            arcpy.AddWarning("Error, could not properly read oprindelsejournal")
+            arcpy.AddWarning(traceback.format_exc())
+
         manhole_table_dict = {0: u"Uoplyst", 1: u"Brønd (standard)", 2: u"Rensebrønd", 3: u"Tømme-/aftapningsbrønd",
                               4: u"Spulebrønd", 5: u"Ventilbrønd", 6: u"Udluftningsbrønd", 7: u"Målerbrønd",
                               8: u"Sivebrønd", 9: u"Nedløbsbrønd", 10: u"Samlebrønd", 11: u"Rendestensbrønd",
                               12: u"Nedgangsbrønd", 13: u"Tilslutningsbrønd", 14: u"Etagebrønd", 50: u"Andet"}
+
+        knudekode_dict = {
+                        1: u"Brønd",
+                        3: u"Bassin",
+                        4: u"Pumpe",
+                        5: u"Renseanlæg",
+                        6: u"Udskiller",
+                        7: u"Sandfang",
+                        8: u"Overløb",
+                        9: u"Udløb",
+                        10: u"Regulering",
+                        11: u"Bygv.",
+                        12: u"Bygv.",
+                        13: u"Tryktårn",
+                        15: u"Stikknude",
+                        16: u"Fiktiv knu",
+                        18: u"Nedsivning",
+                        19: u"Tank",
+                        20: u"Punkt",
+                        45: u"",
+                        50: u"Andet"
+                    }
 
         statusUpdate("Reading manholes", tic)
         nodesDict = {}
@@ -438,6 +503,7 @@ class Dandas2MULinks(object):
                 msm_Node_Table["MUID"] = nodes[nodei].attrib['Knudenavn']
                 # arcpy.AddMessage(dir(nodes[nodei]))
                 knudekode = xml_get(node, "KnudeKode", cast=int, default=0)
+                msm_Node_Table["Knudekode"] = knudekode_dict[knudekode]
 
                 statuskode_transformer = {0: 'Uoplyst', 1: 'I brug/drift', 2: 'Ikke I brug', 3: 'Afproppet',
                                           4: 'Opfyldt', 5: u'Død', 6: 'Projekteret / planlagt', 7: 'Anlagt',
@@ -456,12 +522,21 @@ class Dandas2MULinks(object):
 
                 msm_Node_Table["Ejer"] = re.sub(r'[^\d\w]+', "", xml_get(node, "Ejerfordelingsnavn", default=""))
 
-                msm_Node_Table["Bemaerkning"] = xml_get(node, "Bemaerkning", cast=str)
+                oprind_bundkote_journalnr = node.find("OprindBundkoteJournalnr").text if node.find("OprindBundkoteJournalnr") is not None else None
+
+                if oprind_bundkote_journalnr in [journal.journalnr for journal in oprindelse_journaler.values()]:
+                    msm_Node_Table["BK_oprindelse"] = [journal.betegnelse for journal in oprindelse_journaler.values() if journal.journalnr == oprind_bundkote_journalnr][0]
+                else:
+                    msm_Node_Table["BK_oprindelse"] = ""
+
+                msm_Node_Table["Bemaerkning"] = xml_get(node, "Bemaerkning", cast=text_type)
 
                 if node.find("Broend/BroendKode") is not None:
                     broendkode = xml_get(node, "Broend/BroendKode", cast=int)
                     msm_Node_Table["Broendkode"] = manhole_table_dict[
                         broendkode] if broendkode in manhole_table_dict else broendkode
+
+                # msm_Node_Table["Knudekode"] = xml_get(node, "Bemaerkning", cast=text_type)
                     # arcpy.AddMessage((msm_Node_Table["Broendkode"], broendkode))
                 # if not nodes[nodei].find()
                 # msm_Node_Table["Broendkode"] = manhole_table_dict[nodes[nodei].attrib['Broendkode']]
@@ -567,7 +642,7 @@ class Dandas2MULinks(object):
                         ID = ID + 1
             except Exception as e:
                 arcpy.AddWarning(traceback.format_exc())
-                arcpy.AddWarning(e.message)
+                arcpy.AddWarning(str(e))
         del msm_Node_Cursor
 
         if import_catchments:
@@ -707,7 +782,7 @@ class Dandas2MULinks(object):
 
                     if link.find(
                             "DatoEtableret") is not None:
-                        linkDictionary["YearEst"] = int(xml_get(link, "DatoEtableret", cast=str)[:4])
+                        linkDictionary["YearEst"] = int(xml_get(link, "DatoEtableret", cast=text_type)[:4])
 
                     if link.find("DelLedningItems") is not None and link.find("DelLedningItems").find(
                             "DelLedning") is not None:
@@ -730,7 +805,13 @@ class Dandas2MULinks(object):
                         if not linkDictionary["YearEst"] and link_delledning.find("DatoEtableret") is not None:
                             linkDictionary["YearEst"] = int(link_delledning.find("DatoEtableret").text[:4])
 
-                        linkDictionary["Description"] = xml_get(link, "Bemaerkning", default="", slice_len=50)
+                        ledning_description = xml_get(link, "Bemaerkning", cast = text_type, default="", slice_len=50)
+                        delledning_description = xml_get(link_delledning, "Bemaerkning", cast = text_type, default="", slice_len=50)
+
+                        if len(delledning_description) > len(ledning_description):
+                            linkDictionary["Description"] = delledning_description
+                        else:
+                            linkDictionary["Description"] = ledning_description
 
                         if link_delledning.find("MaterialeKode") is not None:
                             material = int(link_delledning.find("MaterialeKode").text)
@@ -757,8 +838,6 @@ class Dandas2MULinks(object):
                             linkDictionary["Slope_C"] = float(link_delledning.find("Fald").text) / 10
 
                     try:
-                        if nodesDict[linkDictionary["FROMNODE"]] == "OKS0933":
-                            arcpy.AddMessage(linkDictionary["FROMNODE"])
                         vertices = [arcpy.Point(nodesDict[linkDictionary["FROMNODE"]][0],
                                                 nodesDict[linkDictionary["FROMNODE"]][1])]
 
@@ -804,6 +883,31 @@ class Dandas2MULinks(object):
             if not "D:" in label_class.expression:
                 label_class.expression = label_class.expression.replace("return labelstr",
                                                                         'if [GroundLevel] and [InvertLevel]: labelstr += "\\nD:%1.2f" % ( convertToFloat([GroundLevel]) - convertToFloat([InvertLevel]) )\r\n  return labelstr')
+
+            label_exp = label_class.expression
+            label_exp = re.sub(r'(def\s+FindLabel\s*\(.*?)(\s*\):)', r'\1, [BK_oprindelse], [Knudekode]\2', label_exp)
+
+            bk_pattern = r'(labelstr[^\r\n]*MUID[^\r\n]*)'
+
+            # We use \1 to keep the original line and append our new logic
+            if arcgis_pro:
+                insertion = r'\1\r\n  if not [Knudekode] == u"Brønd": labelstr += "\\n%s" % ([Knudekode])'
+            else:
+                insertion = r'\1\r\n  if not [Knudekode] == u"Brønd": labelstr += "\\n%s" % ([Knudekode])'
+
+            label_exp = re.sub(bk_pattern, insertion, label_exp)
+            label_class.expression = label_exp
+
+            # 2. Inject the BK_oprindelse logic after the InvertLevel block
+            # Logic: Look for the line that sets the BK label, and append the origin check right after it
+            # We look for the pattern: labelstr += "...BK..." % (...)
+            bk_pattern = r'(labelstr[^\r\n]*BK[^\r\n]*)'
+
+            # We use \1 to keep the original line and append our new logic
+            insertion = r'\1\r\n    if [BK_oprindelse]: labelstr += " (%s)" % ([BK_oprindelse])'
+
+            label_exp = re.sub(bk_pattern, insertion, label_exp)
+            label_class.expression = label_exp
 
         if dandas_ledninger:
             addLayer(os.path.dirname(os.path.realpath(__file__)) + "\Data\msm_Link_DDS.lyr", msm_Link,
@@ -1376,13 +1480,20 @@ class CopyMikeUrbanFeatures(object):
                     MUIDs = nodes_in_msm_Node
                     # sql_expression = "ATTACH DATABASE %s AS source; SELECT * INTO main.msm_Node FROM source.msm_Node WHERE MUID IN ('%s')" % (reference_MU_database, "', '".join(MUIDs))
 
+                    def to_unicode(s):
+                        if sys.version_info[0] < 3:
+                            if isinstance(s, str):
+                                return s.decode("utf-8")
+                            return s
+                        return s
+
                     source_lineno = \
                         [i for i, line in enumerate(xml_txt) if '<JobPropertyValue property="Source"' in line][0]
 
                     try:
                         xml_txt[source_lineno] = re.sub('value *= *"[^"]+"',
-                                                        'value="%s"' % reference_MU_database.replace("\\", r"\\"),
-                                                        xml_txt[source_lineno])
+                                                        'value="%s"' % to_unicode(reference_MU_database.replace("\\", r"\\")),
+                                                        to_unicode(xml_txt[source_lineno]))
                     except Exception as e:
                         arcpy.AddMessage('value *= *"[^"]+"')
                         arcpy.AddMessage('value="%s"' % reference_MU_database)
@@ -1638,9 +1749,10 @@ class CopyMikeUrbanFeatures(object):
 
             if is_sqlite:
                 import tempfile
+                import codecs
                 output_path = os.path.join(tempfile.gettempdir(),
                                            '%s.xml' % os.path.basename(reference_MU_database).split(".")[0])
-                with open(output_path, 'w') as f:
+                with codecs.open(output_path, 'w', "utf-8") as f:
                     f.writelines(xml_txt)
                 import subprocess
                 subprocess.call('explorer /select,"%s"' % output_path)

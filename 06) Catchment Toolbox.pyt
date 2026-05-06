@@ -1954,6 +1954,7 @@ class SetImperviousness(object):
                 "Confirm Assignment", 4)
         arcpy.AddMessage("MUIDs IN ('%s')" % ("', '".join(MUIDs)))
         if userquery == "Yes":
+            arcpy.AddMessage(is_sqlite)
             if "OplandData_GDB" in arcpy.Describe(catchments).file:
                 catchmentcursor = arcpy.da.UpdateCursor(catchments, ["MUID", "BEF_GRAD"], where_clause = "MUIDs IN ('%s')" % ("', '".join(MUIDs)))
             elif is_sqlite:
@@ -1977,18 +1978,18 @@ class SetImperviousness(object):
             else:
                 catchmentcursor = arcpy.da.UpdateCursor(
                     os.path.join(os.path.dirname(arcpy.Describe(catchments).path), "msm_HModA"), ["CatchID", "ImpArea"], where_clause = "CatchID IN ('%s')" % ("', '".join(MUIDs)))
-            for row in catchmentcursor:
-                oldValue = row[1]
-                row[1] = imperviousness
-                if abs(oldValue - row[1]) > 1:
-                    arcpy.AddMessage("Changed catchment %s from %1.0f to %1.0f" % (row[0], oldValue, row[1]))
-                    try:
-                        catchmentcursor.updateRow(row)
-                    except Exception as e:
-                        arcpy.AddError("Can't change %s from %d to %d" % (row[0], oldValue, row[1]))
-                        raise (e)
+                for row in catchmentcursor:
+                    oldValue = row[1]
+                    row[1] = imperviousness
+                    if abs(oldValue - row[1]) > 1:
+                        arcpy.AddMessage("Changed catchment %s from %1.0f to %1.0f" % (row[0], oldValue, row[1]))
+                        try:
+                            catchmentcursor.updateRow(row)
+                        except Exception as e:
+                            arcpy.AddError("Can't change %s from %d to %d" % (row[0], oldValue, row[1]))
+                            raise (e)
 
-            del catchmentcursor
+                del catchmentcursor
             # if True in catchmentsWithoutModelParameters:
             #     arcpy.AddWarning(
             #         "Catchments without Model Records [msm_HModA] (imperviousness not set): '" + "', '".join(
