@@ -862,6 +862,8 @@ class DisplayFloodReturnPeriodFun(object):
         return True
 
     def updateParameters(self, parameters): #optional
+        if parameters[0].value:
+            parameters[0].value = parameters[0].value.replace('"','')
         if parameters[0].altered and parameters[0].value and not parameters[1].value:
             with open(parameters[0].ValueAsText,"r") as f:
                 txt = f.read()
@@ -2143,6 +2145,8 @@ class DisplayMIKE1DResults(object):
     def updateParameters(self, parameters):  # optional
         # res1d_filepath = parameters[4]
         # python3_path = parameters[5]
+        if parameters[0].value:
+            parameters[0].value = parameters[0].value.replace('"','')
         if parameters[0].altered and parameters[0].value and not parameters[1].value and not parameters[2].value:
             folder = parameters[0].ValueAsText
             import glob, os
@@ -2686,11 +2690,22 @@ class ReadMIKE1DResults(object):
         return True
 
     def updateParameters(self, parameters):  # optional
-        res1d_filepaths = [f.replace("'", "") for f in parameters[0].ValueAsText.split(";")] if parameters[0].ValueAsText else None
+        if parameters[0].values:
+            cleaned = []
+
+            for val in parameters[0].values:
+                cleaned.append(str(val).replace('"', ''))
+
+            parameters[0].values = cleaned
+
+        res1d_filepaths = [f.replace("'",'') for f in parameters[0].ValueAsText.split(";")] if parameters[0].ValueAsText else None
         if res1d_filepaths:
             res1d_filepath = res1d_filepaths[0]
         else:
             res1d_filepath = None
+
+        if parameters[1].value:
+            parameters[1].value = parameters[1].ValueAsText.replace('"','')
 
         display_results = parameters[3]
         display_type = parameters[2]
@@ -3268,7 +3283,7 @@ class PlotRes1D(object):
                     i += 1
 
                     if len(result_files) > 1:
-                        label = "%s (%s)" % (col.split(":")[1], os.path.basename(result_file).replace("Base", "").replace(".res1d",""))
+                        label = "%s (%s)" % (col.split(":")[1], os.path.basename(result_file).replace("Base", "").replace(".res1d","").replace("Default_Network_HD",""))
                     else:
                         label = "%s" % (col.split(":")[1])
 

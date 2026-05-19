@@ -271,6 +271,13 @@ class Dandas2MULinks(object):
         #  or height of the extent of the input features.  Do not set if there is no
         #  input dataset yet, or the user has set a specific distance (Altered is true).
         #
+
+        if parameters[0].ValueAsText:
+            parameters[0].Value = parameters[0].ValueAsText.replace('"', '')
+
+        if parameters[1].ValueAsText:
+            parameters[1].Value = parameters[1].ValueAsText.replace('"', '')
+
         if parameters[0].ValueAsText and not parameters[1].ValueAsText:
             if re.search(r"(?<=.)knude(?=.)", os.path.basename(parameters[0].ValueAsText), flags=re.IGNORECASE):
                 ledninger_filename = re.sub(r"(?<=.)knude(?=.)", "Ledning", os.path.basename(parameters[0].ValueAsText),
@@ -1247,6 +1254,20 @@ class CopyMikeUrbanFeatures(object):
             parameterType="Optional",
             direction="Input")
 
+        msm_Weir = arcpy.Parameter(
+            displayName="Weir Layer:",
+            name="msm_Weir",
+            datatype="GPFeatureLayer",
+            parameterType="Optional",
+            direction="Input")
+
+        msm_Orifice = arcpy.Parameter(
+            displayName="Orifice Layer:",
+            name="msm_Orifice",
+            datatype="GPFeatureLayer",
+            parameterType="Optional",
+            direction="Input")
+
         transfer_mode = arcpy.Parameter(
             displayName="Transfer Mode (if MIKE+)",
             name="transfer_mode",
@@ -1265,7 +1286,7 @@ class CopyMikeUrbanFeatures(object):
         ]
         transfer_mode.value = "Append & Update"  # default value
 
-        params = [MU_database, msm_Node, msm_Link, ms_Catchment, transfer_mode]
+        params = [MU_database, msm_Node, msm_Link, ms_Catchment, msm_Weir, msm_Orifice, transfer_mode]
 
         return params
 
@@ -1277,7 +1298,7 @@ class CopyMikeUrbanFeatures(object):
         #  or height of the extent of the input features.  Do not set if there is no
         #  input dataset yet, or the user has set a specific distance (Altered is true).
         #
-        if not parameters[1].value and not parameters[2].value and not parameters[3].value:
+        if not parameters[1].value and not parameters[2].value and not parameters[3].value and not parameters[4].value and not parameters[5].value:
             if arcgis_pro:
                 aprx = arcpymapping.ArcGISProject("CURRENT")
                 map_view = aprx.activeMap
@@ -1290,6 +1311,7 @@ class CopyMikeUrbanFeatures(object):
                                 parameters[1].value = layer.longName
                                 continue
                             if layer.getSelectionSet() and description.shapeType == "Polyline" and "muid" in [
+                                field.name.lower() for field in arcpy.ListFields(description.catalogPath)] and "materialid" in [
                                 field.name.lower() for field in arcpy.ListFields(description.catalogPath)]:
                                 parameters[2].value = layer.longName
                                 continue
@@ -1297,6 +1319,16 @@ class CopyMikeUrbanFeatures(object):
                                 field.name.lower() for field in arcpy.ListFields(description.catalogPath)]:
                                 parameters[3].value = layer.longName
                                 continue
+                            if layer.getSelectionSet() and description.shapeType == "Polyline" and "crestlevel" in [
+                                field.name.lower() for field in arcpy.ListFields(description.catalogPath)]:
+                                parameters[4].value = layer.longName
+                                continue
+                            if layer.getSelectionSet() and description.shapeType == "Polyline" and "maxgatelevel" in [
+                                field.name.lower() for field in arcpy.ListFields(description.catalogPath)]:
+                                parameters[5].value = layer.longName
+                                continue
+
+
                         except Exception as e:
                             pass
             else:
@@ -1336,9 +1368,9 @@ class CopyMikeUrbanFeatures(object):
                 parameters[0].value = database.replace("Instance=", "")
 
         if parameters[0].value and ".sqlite" in parameters[0].valueAsText:
-            parameters[4].enabled = True
+            parameters[6].enabled = True
         else:
-            parameters[4].enabled = False
+            parameters[6].enabled = False
 
         # if parameters[0].valueAsText:
         #     MU_database = parameters[0].valueAsText
@@ -1361,7 +1393,9 @@ class CopyMikeUrbanFeatures(object):
         msm_Node = parameters[1].value
         msm_Link = parameters[2].value
         ms_Catchment = parameters[3].value
-        transfer_mode = parameters[4].ValueAsText
+        msm_Weir = parameters[4].value
+        msm_Orifice = parameters[5].value
+        transfer_mode = parameters[6].ValueAsText
 
         if transfer_mode == "Append & Update":
             transfer_mode = "AppendUpdate"
@@ -1371,14 +1405,16 @@ class CopyMikeUrbanFeatures(object):
         # arcpy.AddMessage((msm_Links, ".sqlite" in arcpy.Describe(msm_Links[0]).catalogPath))
         if (msm_Node and ".sqlite" in arcpy.Describe(msm_Node).catalogPath) or (
                 msm_Link and ".sqlite" in arcpy.Describe(msm_Link).catalogPath) or (
-                ms_Catchment and ".sqlite" in arcpy.Describe(ms_Catchment).catalogPath):
+                ms_Catchment and ".sqlite" in arcpy.Describe(ms_Catchment).catalogPath) or (
+                msm_Weir and ".sqlite" in arcpy.Describe(msm_Weir).catalogPath) or (
+                msm_Orifice and ".sqlite" in arcpy.Describe(msm_Orifice).catalogPath):
             source_type = 'MUPlusDB'
         else:
             source_type = 'Geodatabase'
 
         is_sqlite = True if ".sqlite" in MU_database else False
         arcpy.env.overwriteOutput = True
-        nodes_count, links_count, catchments_count = (0, 0, 0)
+        nodes_count, links_count, catchments_count, weirs_count, orifices_count = (0, 0, 0, 0, 0)
         import random
         from_mike = False
         if msm_Node:
@@ -1394,9 +1430,23 @@ class CopyMikeUrbanFeatures(object):
                 from_mike = True
 
         if ms_Catchment:
+            arcpy.AddMessage(ms_Catchment)
+
             catchments_in_ms_Catchment = [row[0] for row in arcpy.da.SearchCursor(ms_Catchment, ["MUID"])]
             catchments_count = len(catchments_in_ms_Catchment)
             if ".sqlite" in arcpy.Describe(ms_Catchment).catalogPath:
+                from_mike = True
+
+        if msm_Weir:
+            msm_Weir_muids = [row[0] for row in arcpy.da.SearchCursor(msm_Weir, ["MUID"])]
+            weirs_count = len(msm_Weir_muids)
+            if ".sqlite" in arcpy.Describe(msm_Weir).catalogPath:
+                from_mike = True
+                
+        if msm_Orifice:
+            msm_Orifice_muids = [row[0] for row in arcpy.da.SearchCursor(msm_Orifice, ["MUID"])]
+            orifices_count = len(muid)
+            if ".sqlite" in arcpy.Describe(msm_Orifice).catalogPath:
                 from_mike = True
 
         if is_sqlite:
@@ -1420,15 +1470,27 @@ class CopyMikeUrbanFeatures(object):
             if not msm_Link:
                 enabled_lineno = [i for i, line in enumerate(xml_txt) if 'property="msm_Link" value=' in line][0]
                 xml_txt[enabled_lineno] = re.sub('value *= *"[^"]+"', 'value="False"', xml_txt[enabled_lineno])
+                
+            if not msm_Weir:
+                enabled_lineno = [i for i, line in enumerate(xml_txt) if 'property="msm_Weir" value=' in line][0]
+                xml_txt[enabled_lineno] = re.sub('value *= *"[^"]+"', 'value="False"', xml_txt[enabled_lineno])
 
+            if not msm_Orifice:
+                enabled_lineno = [i for i, line in enumerate(xml_txt) if 'property="msm_Orifice" value=' in line][0]
+                xml_txt[enabled_lineno] = re.sub('value *= *"[^"]+"', 'value="False"', xml_txt[enabled_lineno])
+
+        if msm_Weir or msm_Orifice:
+            weir_and_orifice_txt = " and %d weirs and %d orifices" % (weirs_count, orifices_count)
+        else:
+            weir_and_orifice_txt = ""
         if arcgis_pro:
             userquery = confirm_assignment(
-                "You are copying %d manholes, %d pipes, and %d catchments. Continue?" % (nodes_count, links_count,
+                "You are copying %d manholes, %d pipes,%s and %d catchments. Continue?" % (nodes_count, links_count, weir_and_orifice_txt,
                                                                                          catchments_count),
                 "Confirm copy?", 1)
         else:
             userquery = pythonaddins.MessageBox(
-                "You are copying %d manholes, %d pipes, and %d catchments. Continue?" % (nodes_count, links_count,
+                "You are copying %d manholes, %d pipes,%s and %d catchments. Continue?" % (nodes_count, links_count, weir_and_orifice_txt,
                                                                                          catchments_count),
                 "Confirm copy?", 1)
         if userquery == "OK":
@@ -1508,9 +1570,9 @@ class CopyMikeUrbanFeatures(object):
 
                     # Change source type if MIKE+
                     source_type_lineno = [i for i, line in enumerate(xml_txt) if 'sourceTypeParameter' in line][0]
-
                     xml_txt[source_type_lineno] = xml_txt[source_type_lineno].replace("sourceTypeParameter",
                                                                                       source_type)
+                    arcpy.AddMessage("HERE")
 
                 else:
                     selected = arcpy.Select_analysis(msm_Node, "in_memory\msm_Node")
@@ -1624,10 +1686,14 @@ class CopyMikeUrbanFeatures(object):
                                                     xml_txt[source_lineno])
 
                     if len([i for i, line in enumerate(xml_txt) if 'sourceTypeParameter' in line]) > 0:
-                        source_type_lineno = [i for i, line in enumerate(xml_txt) if 'sourceTypeParameter' in line][0]
+                        try:
+                            source_type_lineno = [i for i, line in enumerate(xml_txt) if 'sourceTypeParameter' in line][0]
 
-                        xml_txt[source_type_lineno] = xml_txt[source_type_lineno].replace("sourceTypeParameter",
+                            xml_txt[source_type_lineno] = xml_txt[source_type_lineno].replace("sourceTypeParameter",
                                                                                           source_type)
+                        except Exception as e:
+                            pass
+
 
                     MUIDs = catchments_in_ms_Catchment
                     msm_Catchment_where_clause_lineno = \
@@ -1746,6 +1812,92 @@ class CopyMikeUrbanFeatures(object):
                         arcpy.AddMessage("CatchID IN ('%s')" % "', '".join(MUIDs))
                         arcpy.AddMessage([row[0] for row in arcpy.da.SearchCursor(selected_CatchCon, ["CatchID"])])
                         arcpy.management.Append(selected_CatchCon, MU_database + "\msm_CatchCon")
+
+            if msm_Weir:
+                reference_MU_database = os.path.dirname(arcpy.Describe(msm_Weir).catalogPath)
+
+                if is_sqlite:
+                    def to_unicode(s):
+                        if sys.version_info[0] < 3:
+                            if isinstance(s, str):
+                                return s.decode("utf-8")
+                            return s
+                        return s
+
+                    source_lineno = \
+                        [i for i, line in enumerate(xml_txt) if '<JobPropertyValue property="Source"' in line][0]
+
+                    try:
+                        xml_txt[source_lineno] = re.sub('value *= *"[^"]+"',
+                                                        'value="%s"' % to_unicode(reference_MU_database.replace("\\", r"\\")),
+                                                        to_unicode(xml_txt[source_lineno]))
+                    except Exception as e:
+                        arcpy.AddMessage('value *= *"[^"]+"')
+                        arcpy.AddMessage('value="%s"' % reference_MU_database)
+                        arcpy.AddMessage(xml_txt[source_lineno])
+                        raise (e)
+
+                    msm_Weir_where_clause_lineno = \
+                    [i for i, line in enumerate(xml_txt) if '"msm_Weir_where_clause"' in line][0]
+                    xml_txt[msm_Weir_where_clause_lineno] = re.sub('value *= *"[^"]+"',
+                                                                   "value=\"MUID IN ('%s')\"" % "', '".join(msm_Weir_muids),
+                                                                   xml_txt[msm_Weir_where_clause_lineno])
+
+                    # Change source type if MIKE+
+                    try:
+                        source_type_lineno = [i for i, line in enumerate(xml_txt) if 'sourceTypeParameter' in line][0]
+                        if source_type_lineno:
+                            xml_txt[source_type_lineno] = xml_txt[source_type_lineno].replace("sourceTypeParameter",
+                                                                                          source_type)
+                    except Exception as e:
+                        pass
+
+                else:
+                    selected = arcpy.Select_analysis(msm_Weir, "in_memory\msm_Weir")
+                    arcpy.Append_management(selected, MU_database + "\msm_Weir", schema_type="NO_TEST")
+            if msm_Orifice:
+                reference_MU_database = os.path.dirname(arcpy.Describe(msm_Orifice).catalogPath)
+
+                if is_sqlite:
+                    def to_unicode(s):
+                        if sys.version_info[0] < 3:
+                            if isinstance(s, str):
+                                return s.decode("utf-8")
+                            return s
+                        return s
+
+                    source_lineno = \
+                        [i for i, line in enumerate(xml_txt) if '<JobPropertyValue property="Source"' in line][0]
+
+                    try:
+                        xml_txt[source_lineno] = re.sub('value *= *"[^"]+"',
+                                                        'value="%s"' % to_unicode(reference_MU_database.replace("\\", r"\\")),
+                                                        to_unicode(xml_txt[source_lineno]))
+                    except Exception as e:
+                        arcpy.AddMessage('value *= *"[^"]+"')
+                        arcpy.AddMessage('value="%s"' % reference_MU_database)
+                        arcpy.AddMessage(xml_txt[source_lineno])
+                        raise (e)
+
+                    msm_Orifice_where_clause_lineno = \
+                    [i for i, line in enumerate(xml_txt) if '"msm_Orifice_where_clause"' in line][0]
+                    xml_txt[msm_Orifice_where_clause_lineno] = re.sub('value *= *"[^"]+"',
+                                                                   "value=\"MUID IN ('%s')\"" % "', '".join(msm_Orifice_muids),
+                                                                   xml_txt[msm_Orifice_where_clause_lineno])
+
+                    # Change source type if MIKE+
+                    try:
+                        source_type_lineno = [i for i, line in enumerate(xml_txt) if 'sourceTypeParameter' in line][0]
+
+                        xml_txt[source_type_lineno] = xml_txt[source_type_lineno].replace("sourceTypeParameter",
+                                                                                      source_type)
+                    except Exception as e:
+                        arcpy.AddMessage("BOB")
+                        pass
+
+                else:
+                    selected = arcpy.Select_analysis(msm_Orifice, "in_memory\msm_Orifice")
+                    arcpy.Append_management(selected, MU_database + "\msm_Orifice", schema_type="NO_TEST")
 
             if is_sqlite:
                 import tempfile
