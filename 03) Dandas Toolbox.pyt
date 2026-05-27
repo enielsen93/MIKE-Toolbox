@@ -828,17 +828,29 @@ class Dandas2MULinks(object):
                             linkDictionary["MaterialID"] = 'Concrete (Normal)'
 
                         if link_delledning.find("BundloebskoteOpst") is not None:
-                            if (link_delledning.find("DeltaKoteOpst") is not None and
-                                    not link_delledning.find("DeltaKoteOpst").text == "0.00"):
-                                if nodesDict[linkDictionary["FROMNODE"]][2] is not None and abs(nodesDict[linkDictionary["FROMNODE"]][2] - float(
-                                        link_delledning.find("BundloebskoteOpst").text)) > ignore_elevation_difference:
+                            if link_delledning.find("DeltaKoteOpst") is not None:
+                                if not link_delledning.find("DeltaKoteOpst").text == "0.00":
+                                    if nodesDict[linkDictionary["FROMNODE"]][2] is not None and abs(nodesDict[linkDictionary["FROMNODE"]][2] - float(
+                                            link_delledning.find("BundloebskoteOpst").text)) > ignore_elevation_difference:
+                                        linkDictionary["UpLevel"] = float(link_delledning.find("BundloebskoteOpst").text)
+                            else:
+                                if nodesDict[linkDictionary["FROMNODE"]][2] is not None and abs(
+                                        nodesDict[linkDictionary["FROMNODE"]][2] - float(
+                                                link_delledning.find(
+                                                    "BundloebskoteOpst").text)) > ignore_elevation_difference:
                                     linkDictionary["UpLevel"] = float(link_delledning.find("BundloebskoteOpst").text)
 
                         if link_delledning.find("BundloebskoteNedst") is not None:
-                            if (link_delledning.find("DeltaKoteNedst") is not None and
-                                    not link_delledning.find("DeltaKoteNedst").text == "0.00"):
-                                if nodesDict[linkDictionary["TONODE"]][2] is not None and abs(nodesDict[linkDictionary["TONODE"]][2] - float(
-                                        link_delledning.find("BundloebskoteNedst").text)) > ignore_elevation_difference:
+                            if link_delledning.find("DeltaKoteNedst") is not None:
+                                if not link_delledning.find("DeltaKoteNedst").text == "0.00":
+                                    if nodesDict[linkDictionary["TONODE"]][2] is not None and abs(nodesDict[linkDictionary["TONODE"]][2] - float(
+                                            link_delledning.find("BundloebskoteNedst").text)) > ignore_elevation_difference:
+                                        linkDictionary["DwLevel"] = float(link_delledning.find("BundloebskoteNedst").text)
+                            else:
+                                if nodesDict[linkDictionary["TONODE"]][2] is not None and abs(
+                                        nodesDict[linkDictionary["TONODE"]][2] - float(
+                                                link_delledning.find(
+                                                    "BundloebskoteNedst").text)) > ignore_elevation_difference:
                                     linkDictionary["DwLevel"] = float(link_delledning.find("BundloebskoteNedst").text)
 
                         if link_delledning.find("Fald") is not None:
@@ -1471,11 +1483,11 @@ class CopyMikeUrbanFeatures(object):
                 enabled_lineno = [i for i, line in enumerate(xml_txt) if 'property="msm_Link" value=' in line][0]
                 xml_txt[enabled_lineno] = re.sub('value *= *"[^"]+"', 'value="False"', xml_txt[enabled_lineno])
                 
-            if not msm_Weir:
+            if from_mike and not msm_Weir:
                 enabled_lineno = [i for i, line in enumerate(xml_txt) if 'property="msm_Weir" value=' in line][0]
                 xml_txt[enabled_lineno] = re.sub('value *= *"[^"]+"', 'value="False"', xml_txt[enabled_lineno])
 
-            if not msm_Orifice:
+            if from_mike and not msm_Orifice:
                 enabled_lineno = [i for i, line in enumerate(xml_txt) if 'property="msm_Orifice" value=' in line][0]
                 xml_txt[enabled_lineno] = re.sub('value *= *"[^"]+"', 'value="False"', xml_txt[enabled_lineno])
 

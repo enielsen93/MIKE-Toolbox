@@ -3041,6 +3041,9 @@ class PlotRes1D(object):
         return True
 
     def updateParameters(self, parameters):
+        if parameters[2].Values:
+            parameters[2].Value = [str(value).replace('"','') for value in parameters[2].Values]
+
         if not parameters[3].Value:
             parameters[3].Value = True
             if arcgis_pro:

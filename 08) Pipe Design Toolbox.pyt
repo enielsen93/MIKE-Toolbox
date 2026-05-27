@@ -2913,7 +2913,7 @@ class DrawLongitudinalProfiles(object):
         # Define parameter definitions
 
         pipe_layer = arcpy.Parameter(
-            displayName="Reach feature layer",
+            displayName="Reach feature layers",
             name="pipe_layer",
             multiValue=True,
             datatype="GPFeatureLayer",
@@ -3047,13 +3047,29 @@ class DrawLongitudinalProfiles(object):
             direction="Input")
         trace_through.value = False
 
-        parameters = [pipe_layer, result_files, draw_map, pdf_output, overwrite_or_append, backup_tempfile, zoom_level, reference_scale, figure_size, font_size, elements_to_display, trace_through]
+        comparison_databases = arcpy.Parameter(
+            displayName="Databases to compare with",
+            name="comparison_databases",
+            multiValue=True,
+            datatype="DEWorkspace",
+            category="Compare profile with other databases",
+            parameterType="Optional",
+            direction="Input")
+        parameters = [pipe_layer, result_files, draw_map, pdf_output, overwrite_or_append, backup_tempfile, zoom_level, reference_scale, figure_size, font_size, elements_to_display, trace_through, comparison_databases]
         return parameters
 
     def isLicensed(self):
         return True
 
     def updateParameters(self, parameters):
+        for p in parameters:
+            # Clean workspace paths (remove quotes)
+            if p.datatype.lower() == "workspace" and p.valueAsText:
+                p.value = p.valueAsText.replace('"', '')
+
+        if parameters[1].Values:
+            parameters[1].Value = [str(value).replace('"', '') for value in parameters[1].Values]
+
         draw_map = parameters[2]
         pdf_output = parameters[3]
         overwrite_or_append = parameters[4]
@@ -3172,6 +3188,10 @@ class DrawLongitudinalProfiles(object):
         elements_to_display = [f.replace("'", "").lower() for f in parameters[10].ValueAsText.split(";")] if parameters[
             10].ValueAsText else None
         trace_through = parameters[11]
+        if parameters[12].ValueAsText:
+            comparison_databases = [parameter.replace("'","") for parameter in parameters[12].ValueAsText.split(";")] if parameters[12].ValueAsText else []
+        else:
+            comparison_databases = []
 
         if arcgis_pro:
             if result_files:
@@ -3305,6 +3325,7 @@ class DrawLongitudinalProfiles(object):
         # Use arcpy.da.SearchCursor to fetch rows and attach geometries
 
         # If link_table is a database
+
         if has_database:
             for pipe_layer in pipe_layers:
                 if "msm_Weir".lower() in pipe_layer.dataSource.lower():
@@ -3423,6 +3444,68 @@ class DrawLongitudinalProfiles(object):
             if link.dwlevel and math.isinf(link.dwlevel):
                 link.dwlevel = nodes[link.tonodeid].invertlevel
 
+        class ComparisonDatabase:
+            def __init__(self):
+                self.links = {}
+                self.nodes = {}
+
+        comparison_databases_data = {}
+
+        for comparison_database in comparison_databases:
+            arcpy.AddMessage(comparison_database)
+            comparison_databases_data[comparison_database] = ComparisonDatabase()
+            node_layer = os.path.join(comparison_database, "msm_Node")
+            pipe_layer = os.path.join(comparison_database, "msm_Link")
+            all_link_fields = [f.name.lower() for f in arcpy.ListFields(pipe_layer)]
+            if "fromnodeid" in all_link_fields:
+                fromnode_field = "fromnodeid"
+                tonode_field = "tonodeid"
+            elif "fromnode" in all_link_fields:
+                fromnode_field = "fromnode"
+                tonode_field = "tonode"
+            else:  # Fallback! Will find fromnode and tonode based on geometry instead.
+                fromnode_field = "muid"
+                tonode_field = "muid"
+
+            # Fields to retrieve, including the SHAPE token
+            link_fields = [
+                "muid",
+                fromnode_field,
+                tonode_field,
+                "length" if "length" in all_link_fields else "SHAPE@LENGTH",
+                "diameter",
+                "UpLevel",
+                "DwLevel",
+                "SHAPE@",
+            ]
+
+            with arcpy.da.SearchCursor(pipe_layer, link_fields) as cursor:
+                if fromnode_field == "muid":  # fallback, generate fromnode and tonode based on geometry
+                    import mikegraph
+                    mike_urban_database = os.path.dirname(arcpy.Describe(pipe_layer).catalogPath).replace(
+                        "\mu_Geometry", "")
+                    pipe_layer_network = mikegraph.PipeNetwork(mike_urban_database)
+                for muid, frm, to, length, diam, up, dw, shape in cursor:
+                    if fromnode_field == "muid":  # fallback, generate fromnode and tonode based on geometry
+                        link = pipe_layer_network.links[muid]
+                        frm, to = link.fromnode, link.tonode
+                    link = Link(
+                        muid=muid,
+                        fromnodeid=frm,
+                        tonodeid=to,
+                        length=length,
+                        diameter=diam,
+                        uplevel=up,
+                        dwlevel=dw,
+                        geometry=shape,
+                    )
+                    link.length = link.length if link.length else shape.length
+                    comparison_databases_data[comparison_database].links[muid] = link
+            with arcpy.da.SearchCursor(node_layer, ["MUID", "invertlevel"]) as cursor:
+                for muid, invertlevel in cursor:
+                    comparison_databases_data[comparison_database].nodes[muid] = Node(muid, invertlevel, None, None)
+
+
         # Log results
         arcpy.AddMessage("Loaded {} links and {} nodes".format(len(links), len(nodes)))
 
@@ -3465,7 +3548,7 @@ class DrawLongitudinalProfiles(object):
                             except Exception as e:
                                 pass
 
-                arcpy.AddMessage(f)
+
                 res1d = Res1D(f, reaches = links_fixed)
                 for pipe_i, pipe in enumerate(links_fixed):
                     if pipe in res1d.reaches:
@@ -3636,6 +3719,19 @@ class DrawLongitudinalProfiles(object):
                     ax_plot.text(mid, 0, u'ø{}'.format(int(link.diameter*1e3)) if arcgis_pro else u'\u00F8{}'.format(int(link.diameter*1e3)),
                         transform=transformer,
                         ha='center', va='bottom', fontsize=font_size or 8)
+
+                for comparison in comparison_databases_data.values():
+                    arcpy.AddMessage(comparison)
+                    link = [link for link in comparison.links.values() if
+                            link.fromnodeid in (fromnodeid, tonodeid) and link.tonodeid in (fromnodeid, tonodeid)]
+                    if link:
+                        link = link[0]
+                        uplevel = link.uplevel or comparison.nodes[fromnodeid].invertlevel
+                        dwlevel = link.dwlevel or comparison.nodes[tonodeid].invertlevel
+                        if chainage_0_adj and chainage_1_adj and dwlevel and uplevel and link.diameter:
+                            ax_plot.plot([chainage_0_adj, chainage_1_adj], [uplevel, dwlevel], 'r-', lw=1, alpha=0.5)
+                            ax_plot.plot([chainage_0_adj, chainage_1_adj],
+                                         [uplevel + link.diameter,  dwlevel + link.diameter], 'r-', lw=1, alpha=0.5)
 
             # Draw Manholes
             ax_plot.plot(chainage, groundlevels, 'g-', lw=0.8)
