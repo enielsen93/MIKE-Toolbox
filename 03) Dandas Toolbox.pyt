@@ -576,6 +576,7 @@ class Dandas2MULinks(object):
                 kategori_afloeb = xml_get(nodes[nodei], "KategoriAfloebKode", cast=int)
                 broend_kode = xml_get(nodes[nodei], "Broend/BroendKode", cast=int)
                 punkt_kode = xml_get(nodes[nodei], "Punkt/PunktKode", cast=int)
+                punkt_kode = xml_get(nodes[nodei], "Knudekode", cast=int)
 
                 nettype_no = msm_Node_Table.get("NetTypeNo")
 
@@ -591,7 +592,8 @@ class Dandas2MULinks(object):
                     is_stik_like = (
                             kategori_afloeb == 4 or
                             broend_kode == 16 or
-                            punkt_kode == 8
+                            punkt_kode == 8 or
+                            knudekode == 15
                     )
 
                     is_hovedledning = (kategori_afloeb == 1)
